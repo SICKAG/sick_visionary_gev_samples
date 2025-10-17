@@ -1,0 +1,390 @@
+= Visionary Camera Features Overview
+
+This document provides as an overview of the GenICam features supported by the Visionary-B Two, Visionary-S AP, and Visionary-T Mini AP camera models.
+
+In case of any questions, contact us for further information.
+
+NOTE: The covered Visionary camera models share a common GenICam feature interface. Some of the features described below are, however, implemented only by a subset of the models. To highlight these differences, the features (or enumeration entries) supported only by Visionary-#B# Two are highlighted using #{B}#, those supported only by Visionary-#S# AP with #{S}#, those supported only by Visionary-#T# Mini using #{T}#. Combinations indicate support by multiple models. The set of implemented features can change with future firmware versions.
+
+
+== GenICam Interface Overview
+
+GigE Vision cameras expose their functionality through GenICam-standard-compliant feature description. Wherever possible, Visionary cameras strictly follow the GenICam Standard Features Naming Convention (SFNC).
+
+The current version of the SFNC document can be downloaded from the https://www.emva.org/wp-content/uploads/GenICam_SFNC_v2_7.pdf[official website] for further reference.
+
+In most cases, the brief descriptions in this document should be sufficient. Referring to the SFNC document is mainly useful for understanding the GenICam 3D feature model.
+
+Note that some features may have limited access modes (read/write) and may become read-only or unavailable depending on other settings or the current state of the camera. In particular, many of the features cannot be changed during active acquisition. Numeric features will always report their current limits.
+
+The GenICam SFNC document organizes features into "categories", which are primarily useful when viewing them in a GUI application. These categories are not relevant when accessing features programmatically. For clarity, the features in the following chapters are organized according to their SFNC categories.
+
+== GenICam Feature Categories
+
+=== DeviceControl
+
+Mostly read-only information about the device.
+
+DeviceScanType:: Always set to "Areascan3D"
+
+DeviceVendorName:: Vendor name ("SICK")
+
+DeviceModelName:: Model name (e.g., "Visionary-B Two")
+
+DeviceVersion:: Firmware version of the device as a string
+
+DeviceSerialNumber:: Serial number of the device as a string
+
+DeviceUserID:: User-programmable user identifier (string). The value is retained across reboots. Can be used to assign application-specific identifiers to individual cameras, useful in multi-camera setup.
+
+DeviceLinkHeartbeatMode:: Debug feature, use only when neccessary. Allows to disable the heartbeat control on the device - meaning that the device will not insist on receiving the GigE Vision heartbeat packets from the application and will stay connected even if no such packets arrive. It is usually only good idea to disable the heartbeat if debugging the application (to prevent loosing the device connection when hitting a breakpoint). When disabling and not re-enabling the heartbeat mode and if the application fails to properly close the connection (such as during crash or hard debugger stop), the device will never assume the connection has expired and will have to be rebooted.
+    On::: Heartbeat control enabled - the device disconnects if no heartbeat packet is recevied within the specified `DeviceLinkHeartbeatTimeout`
+    Off::: Heartbeat control disabled - the device remains connected even if no heartbeat packets are received.
+
+DeviceLinkHeartbeatTimeout:: Debug feature, use only when neccessary. Heartbeat timeout (in microseconds) is a time after which the device disconnects if the application fails to maintain the heartbeat protocol (assuming the application disconnected or crashed). In most cases leaving the default value intact is the best solution. Refer also to the DeviceLinkHeartbeatMode feature.
+
+DeviceOperationStatus:: Reports current operational status of the device
+    Ready::: Device is in running state, ready for operation
+    Warning::: Device is in running state, but with a warning asserted (e.g. temperature exceeds warning level)
+    Error::: Device is in running state, but with an error reported (reliable operation not guaranteed)
+    FatalError::: Device is in stopped state, with a fatal error reported (if it persist after reboot, please contact support)
+    NotReady::: Device is not ready for operation (e.g. in transition between states)
+
+DeviceOperationDomainSelector:: Selects a device operation domain to monitor
+    Temperature::: Issues related to temperatures will be reported here. +
+    Optionally, it is possible to start cooling measures if a Warning occurs in the Temperature domain. +
+    If an Error is reported, the camera runs below/above its allowed temperature range. Wait until it has warmed up (cooled down), the Error will disappear then.
+    ElectricalConnectivity::: Issues with digital I/O lines, operating voltage, etc. will be reported here. +
+    If any Warning/Error is reported: please check the wiring and make sure to use sufficient power supply. Allowed ranges can be found in the camera's operation manual.
+    Illumination #{ST}#::: Issues with the camera's active illumination will be reported here. +
+    If a Warning is reported in this domain, it means that the measurement could be decreased/unreliable. +
+    If an Error is reported, it is recommended to power-cycle the device.
+    ImageAcquisition::: Issues with the image acquisition and image processing will be reported here. +
+    Warnings are temporary information, like insufficient ExposureTime for example. +
+    If an Error is reported, it is recommended to power-cycle the device.
+
+DeviceOperationDomainStatus:: Reports the status of the selected device operation domain
+    Ready::: The selected domain is healthy; no issues expected.
+    Warning::: The selected domain is in running state, but with a warning asserted (read camera documentation about suitable measures)
+    Error::: The selected domain detected an malfunction/error (likely solvable by user or reboot)
+    FatalError::: The selected domain detected an unexpected/fatal malfunction (if it persist after reboot, please contact support)
+    NotReady::: The selected domain is not ready (for example in transition between states)
+
+DeviceTemperatureSelector:: Selects among supported device temperature readings to be observed. Currently supported options are
+    System::: The main (system) temperature of the device
+
+DeviceTemperature:: Current value of the device temperature selected in DeviceTemperatureSelector, in degrees of Celsius (C).
+
+DeviceVoltageSelector:: Selects the location within the device, where the voltage will be measured. Currently supported options are
+    InputOperating::: Input operating voltage of the device
+
+DeviceVoltage:: Device voltage in Volts (V). It is measured at the location selected by DeviceVoltageSelector.
+
+DeviceReset:: Resets the device to its power up state (performing a reboot). After reset, the device must be rediscovered
+
+=== ImageFormatControl
+
+Features controlling the image components to be acquired and their parameters.
+
+ComponentSelector:: Selects among supported image data components to be controlled through depending features. Supported components are:
+    Range::: The range (distance) data of individual pixels
+    Intensity::: The intensity (color) data of individual pixels
+    ImuBasic #{BS}#::: The (max.) last 100 IMU data samples. For decoding, please see IMU data-related examples in both Python and C++ example sets of this package.
+
+ComponentEnable:: Boolean feature enabling/disabling acquisition of the component currently selected in ComponentSelector. Note that to be able to enable more than one component at once, the connected GigE Vision receiver must support the GigE Vision "multi-part" streaming mode (introduced in GigE Vision version 2.1). Otherwise, enabling multiple components will not be possible - to switch between them in such case, first disable the current component and then enable the new one.
+
+Width:: Width (in pixels) of the component currently selected in ComponentSelector. Currently fixed (read-only).
+
+Height:: Height (in pixels) of the component currently selected in ComponentSelector. Currently fixed (read-only).
+
+PixelFormat:: Format of the pixels of the component currently selected in ComponentSelector. Currently fixed (read-only) for every component type:
+    Coord3D_C16::: For range component, 16-bit integer pixel values.
+    BGR8 #{BS}#::: For intensity component, blue-green-red 8-bit per channel pixel values.
+    Mono16 #{T}#::: For intensity component, monochrome 16-bit pixel values.
+    Mono8::: For ImuBasic raw data buffer. For decoding please see IMU data-related examples in both Python and C++ example sets of this package.
+
+BinningHorizontal:: Horizontal binning (in pixels) applied on the component currently selected in ComponentSelector - number of horizontal pixels combined together. Different binning factors for individual components (in particular Range and Intensity) are useful to understand those components' mutual scaling factor: important when overlaying the intensity component on top of the range data. Note that horizontal and vertical binning values are always equal on Visionary cameras.
++
+The binning factors are currently fixed (read-only) for #{B}# and #{S}# models. On a #{T}# model the user can select among 1:1, 2:2 and 4:4 binning factors, while the same factor is always applied to both range and intensity components.
+
+BinningVertical:: Vertical binning (in pixels) applied on the component currently selected in ComponentSelector - number of vertical pixels combined together. Different binning factors for individual components (in particular Range and Intensity) are useful to understand those components' mutual scaling factor: important when overlaying the intensity component on top of the range data. Note that horizontal and vertical binnings are always equal on Visionary cameras.
+
+ComponentIDValue:: Unique identifier value of the component currently selected in ComponentSelector. It is defined by the GenICam SFNC standard. It can be used to identify individual components delivered in the data stream.
+
+=== AcquisitionControl
+
+Features controlling the image acquisition and related parameters.
+
+AcquisitionMode:: Always "Continuous".
+
+AcquisitionStart:: Starts acquisition of the device (if GigE Vision stream channel is open). Most GigE Vision receivers handle this feature under the hood, wrapping it in their own acquisition control APIs. In such case the feature should not be touched manually.
+
+AcquisitionStop:: Stops acquisition of the device. Most GigE Vision receivers handle this feature under the hood, wrapping it in its own acquisition control APIs. In such case the feature should not be touched manually.
+
+TriggerSelector #{S}#:: Selects the type of trigger to configure. Currently the only supported trigger type is:
+    FrameStart::: Selects a trigger starting the capture of one frame. When enabled, frames are not acquired "automatically" based on the selected frame rate, but only when a valid trigger is received by the device.
+
+TriggerMode #{S}#:: Controls if the trigger selected in TriggerSelector is active (if corresponding operation works in triggered mode). Possible values are:
+    Off::: Disables the selected trigger.
+    On::: Enables the selected trigger.
+
+TriggerSource #{S}#:: Specifies the physical input line (or other internal/software signal) to use as source of the trigger selected in TriggerSelector. Available only if `TriggerMode` is set to `On`. Currently the only supported trigger source is
+    Line5::: Specifies that the trigger will be generated by hardware through the I/O line number 5 (the only I/O line used as trigger input).
+
+TriggerActivation #{S}#:: Specifies the activation mode of the trigger selected in TriggerSelector. Available only if `TriggerMode` is set to `On` and `TriggerSource` is a hardware trigger line such as `Line5`. Note that the available modes are level-controlled, which means that new frames are generated (based on configured `AcquisitionFrameRate` and exposure settings) as long as the trigger source signal has the expected level. Supported values are:
+    LevelHigh::: Specifies that the trigger is considered valid as long as the level of the source signal is high (starting with its rising edge).
+    LevelLow::: Specifies that the trigger is considered valid as long as the level of the source signal is low (starting with its falling edge).
+
+AcquisitionFrameRate:: Allows to reduce the acquisition frame rate from its maximal value, in Hz. Available only if `ExposureAuto` is set to `Off`. Note that the maximal possible frame rate value might depend on current `MultiSlopeMode`.
+
+ExposureTimeSelector #{BS}#:: Select exposure time to be controlled - useful on camera models allowing to control exposure time separately for the range and intensity sensor. The feature is not applicable on camera models without independently controllable exposure times. Possible values are:
+    Range::: When selected, the exposure related features control the range sensor exposure. On models where intensity data are also provided by the range sensor itself this is the only option.
+    Intensity #{S}#::: When selected, the exposure related features control the intensity/color sensor exposure.
+
+ExposureTime #{BS}#:: Allows to control the exposure time (in microseconds) if `ExposureAuto` is `Off`. If `ExposureAuto` is set to `Continuous`, the feature returns the exposure time currently used by the `ExposureAuto` algorithm. Note that both `ExposureTime` and `ExposureAuto` features depend on `ExposureTimeSelector` (see above), allowing to control the range and intensity sensor exposure separately on camera models which support it.
+
+ExposureAuto #{B}#:: Controls the automatic exposure mode. Depending on the selected state, access to other features may change (see below). Note that both `ExposureTime` and `ExposureAuto` features depend on `ExposureTimeSelector` (see above), allowing to control the range and intensity sensor exposure separately on camera models which support it. The `ExposureAuto` function might be available only for a subset of the `ExposureTimeSelector` options (e.g. only for range but not for the intensity exposure type). Possible states are:
+    Off::: Automatic exposure not used, exposure time controlled through the ExposureTime feature manually. Blocks access to: `ExposureAutoFrameRateMin`.
+    Continuous::: Automatic exposure mode used by the camera. Blocks access to: `AcquisitionFrameRate`. Write-protects `ExposureTime`. +
+    Note: this mode needs a few frames to adapt to changes in the scene.
+
+ExposureAutoFrameRateMin #{B}#:: Sets the minimal required frame rate (in Hz) when ExposureAuto is Continuous. Technically applies upper limit to the automatic exposure time to meet the required frame rate. Available only if `ExposureAuto` is set to `Continuous`.
+
+MultiSlopeMode #{BS}#:: Controls multi-slope exposure mode, allowing to extend the dynamic range of the acquired data. Note that multi-slope functionality always controls the Range data exposure, even on sensors allowing to control Range and Intensity exposure separately (therefore the multi-slope features do not depend on `ExposureTimeSelector`). Possible values are:
+    Off::: Standard mode, single exposure. Reduce motion artifacts.
+    Manual #{S}#::: High dynamic range (HDR) mode, using two separate exposures, manually configurable exposure limits (using `MultiSlopeExposureLimit`). Suitable to cover both dark and shiny objects. But might increase motion artifacts and lower maximal possible frame rate. Only recommended for static scenes.
+    PresetAggressive::: High dynamic range (HDR) mode, using two separate exposures. Suitable to cover both dark and shiny objects. But might increase motion artifacts and lower maximal possible frame rate. Only recommended for static scenes.
+
+MultiSlopeKneePointCount #{S}#:: The number of knee-points as well as the number of additional exposure slopes used for multi-slope exposure in `Manual` `MultiSlopeMode`. Read-only feature with fixed value of `1` - the multi-slope (HDR) mode always consists of two exposures with single knee point between them.
+
+MultiSlopeKneePointSelector #{S}#:: Selects the knee point at which the multi-slope exposure parameters (`MultiSlopeExposureLimit`) should be controlled (in `Manual` `MultiSlopeMode`). Read-only feature with fixed value of `1` - the multi-slope (HDR) mode always consists of two exposures with single knee point between them.
+
+MultiSlopeExposureLimit #{S}#:: Selects the exposure limit at the selected knee point in `Manual` `MultiSlopeMode`. Visionary cameras use always exactly one knee point (two exposures) in the multi-slope mode, therefore this feature controls the limit for the first exposure. The value is interpreted as ratio in percent (%) of the total exposure time (the length of the second exposure is implied by this first exposure limit and the total exposure). +
+_Note that users of the older types of Visionary-S camera might be used to configuring the multi-slope mode using the two separate exposure times. Having those exposure times, `Exposure1` and `Exposure2`, in mind, in this new GenICam compliant interface you would set `ExposureTime` feature to their sum (`Exposure1`+`Exposure2`) and `MultiSlopeExposureLimit` to the percentage ratio of the first one to the sum (`Exposure1`/(`Exposure1`+`Exposure2`)*100%)._
+
+=== AnalogControl
+
+Features controlling the analog camera properties.
+
+BalanceRatioSelector #{S}#:: Selects among the individual white balance ratio components to control. Possible values are:
+    Red::: The balance ratio factor (`BalanceRatio`) to be applied to the red channel.
+    Green::: The balance ratio factor (`BalanceRatio`) to be applied to the green channel.
+    Blue::: The balance ratio factor (`BalanceRatio`) to be applied to the blue channel.
+
+BalanceRatio #{S}#:: Controls ratio (multiplication factor) to be applied to the selected color component.
+
+ColorTemperature #{S}#:: Controls white balance as the desired target image color temperature in Kelvin. Use `ColorTemperatureApply` to apply it. Modifies the R/G/B `BalanceRatio` feature values.
+
+ColorTemperatureApply #{S}#:: Applies the currently configured `ColorTemperature` value. Used to perform white balancing. Modifies the R/G/B `BalanceRatio` feature values.
+
+=== Scan3dControl
+
+Features controlling the 3D data related features.
+
+FieldOfView #{B}#:: Switches among different field of view angles. For specific values see the operating manual of your Visionary device.
+    Wide::: Capture a wider field of view; more shrinkage/compression due to fisheye distortion.
+    Narrow::: Capture a narrower field of view; more details in the center region and higher accuracy over longer distances.
+
+IntensityMapping #{S}#:: Defines whether forward mapping (intensity to depth) or backward mapping (depth to intensity) is used.
+    Disabled::: Intensity image unprocessed.
+    DepthAccuracy::: Intensity image mapped to depth image.
+    IntensityImageQuality::: Depth map data mapped to intensity image.
+
+RangeValueResolution #{S}#:: Defines resolution (smallest measurement step) of the raw range component data. Note that finer resolution implies smaller field of view.
+    Millimeter::: The raw range values provide distance in millimeters. The measurement range is up to 65 meters.
+    TenthOfMillimeter::: The raw range values provide distance in tenths of a millimeter - default option. The measurement range is up to 6.5 meters.
+
+Scan3dDataFilterSelector:: Selects among supported data filters to be controlled (enabled/disabled) on the camera. Supported filters are:
+    ValidationFilter #{BS}#::: Invalidates pixels depending on their reliability. Adjustable with Scan3dDepthValidationFilterLevel from weak (min) to strong (max).
+    IsolatedPixel #{ST}#::: Detects and removes isolated pixels (or small clusters) in the range output and removes them. The filter might have side effects on edges of other objects (their range values get slightly adjusted).
+    RangeLimits #{T}#::: Invalidates all pixels outside the specified range (Z/R) limits.
+    IntensityLimits #{T}#::: Invalidates all pixels outside the specified intensity range.
+    RemissionLimits #{T}#::: Invalidates all pixels outside the specified remission range.
+    EdgeCorrection #{T}#::: Eliminates measurement errors at the edges of objects.
+    Ambiguity #{T}#::: Indentifies and invalidates ambiguities. Adjustable with Scan3dAmbiguityScale from weak (min) to strong (max).
+
+Scan3dDataFilterEnable:: Boolean feature enabling/disabling the data filter currently selected in Scan3dDataFilterSelector.
+
+Scan3dDepthValidationFilterLevel #{BS}#:: Sets the required level of pixel confidence used by the validation filter. Meaning of values: -9 = weakest, 0 = balanced, 9 = strongest filter. Weaker filter means more "valid" points in the output, possibly including noise/artifacts. Stronger filter means the uncertain points are removed from the output, sometimes possibly including actually some valid measurements.
+
+Scan3dIsolatedPixelThreshold #{ST}#:: Threshold for the isolated pixel filter. Reducing the threshold increases the sensitivity of the filter. Be aware, the result depends on the data quality of the neighboring pixels.
+
+Scan3dRangeLowerLimit #{T}#:: Sets the lower limit of range values accepted by the range limits filter.
+
+Scan3dRangeUpperLimit #{T}#:: Sets the upper limit of range values accepted by the range limits filter.
+
+Scan3dIntensityLowerLimit #{T}#:: Sets the lower limit of intensity values accepted by the intensity limits filter.
+
+Scan3dIntensityUpperLimit #{T}#:: Sets the upper limit of intensity values accepted by the intensity limits filter.
+
+Scan3dRemissionLowerLimit #{T}#:: Sets the lower limit of remission values accepted by the remission limits filter.
+
+Scan3dRemissionUpperLimit #{T}#:: Sets the upper limit of remission values accepted by the remission limits filter.
+
+Scan3dAmbiguityScale #{T}#:: Sets the difference scaling factor for the ambiguity filter.
+
+Next the individual features providing the information about the camera's 3D model (incl. camera intrinsic parameters) required to build the point cloud. These provide the current values of the same features delivered within "chunk data features" (see below) as per-buffer metadata. While the chunk features always match the contents of the buffer they are coupled with, these live versions do not correspond with any particular buffer, but reflect the current state of the camera configuration. They can therefore change depending on other features - but they always remain intact during active acquisition session.
+
+The following features adhere to the 3D model described by the GenICan SFNC standard - we recommend to refer to that https://www.emva.org/wp-content/uploads/GenICam_SFNC_v2_7.pdf[document] for detailed understanding.
+
+The "ProjectedC" output mode, is, however, still a pending proposal for SFNC extension. To keep the explanation simple, the algorithm to compute the point cloud from the acquired depth map is provided in PointCloudGeneration.pdf, also delivered with the beta version devices. The algorithm is also demonstrated in the tutorial examples for GenIStream SDK and Harvesters.
+
+Given that, following is the list of the 3D model describing features provided by the camera, for their use refer to above mentioned document(s):
+
+* Scan3dOutputMode
+* Scan3dCoordinateSelector
+* Scan3dCoordinateScale
+* Scan3dCoordinateOffset
+* Scan3dInvalidDataFlag
+* Scan3dInvalidDataValue
+* Scan3dFocalLength
+* Scan3dAspectRatio
+* Scan3dPrincipalPointU
+* Scan3dPrincipalPointV
+* Scan3dDistanceUnit
+* Scan3dCoordinateSystem
+* Scan3dCoordinateSystemReference
+* Scan3dCoordinateReferenceSelector
+* Scan3dCoordinateReferenceValue
+
+=== ChunkDataControl
+
+Contains features controlling reception of the stream metadata and metadata itself. The stream metadata are called "chunk data" in GenICam world.
+
+First the features allowing to switch chunk data delivery together with the data stream (range and/or intensity images). It is recommended to always enable chunk data together with the range component, because they carry information necessary to build the point cloud from the depth map.
+
+ChunkModeActive:: Boolean feature enabling or disabling chunk delivery together with the (image) data stream. It is recommended to always enable and use chunk data to properly interpret the acquired depth (range) map.
+
+ChunkSelector:: This feature is present mainly for GenICam SFNC compatibility and lists all chunk data supported by the camera. Enabling them individually is not, however, supported, the ChunkModeActive feature enables/disables all of them at once.
+
+ChunkEnable:: Present mainly for GenICam SFNC compatibility, Boolean feature representing whether the chunk feature selected in ChunkSelector is currently enabled. This feature is always "true" on this camera. The `ChunkModeActive` feature enables/disables all of them at once.
+
+Next the individual chunk features carrying the information about the camera's 3D model (incl. camera intrinsic parameters) required to build the point cloud. If enabled (through ChunkModeActive), the data will be transmitted together with the data stream for each block ("buffer").
+
+GenICam standard provides a mechanism to parse the delivered chunk data and allow the user to read them as any other camera features. Most GigE Vision receivers will perform these operations for you under the hood and chunk features can be read (same as other features) after each acquired "image". Note that before the first acquisition (or if chunk data were not enabled), the following features will not be available.
+
+The following chunk features adhere to the 3D model described by the GenICan SFNC standard - we recommend to refer to that https://www.emva.org/wp-content/uploads/GenICam_SFNC_v2_7.pdf[document] for detailed understanding.
+
+The "ProjectedC" output mode, is, however, still a pending proposal for SFNC extension. To keep the explanation simple, the algorithm to compute the point cloud from the acquired depth map is provided in PointCloudGeneration.pdf, also delivered with the beta version devices. The algorithm is also demonstrated in the tutorial examples for GenIStream SDK and Harvesters.
+
+Given that, following is the list of the chunk data features generated by the camera, for their use refer to above mentioned document(s):
+
+* ChunkScan3dOutputMode
+* ChunkScan3dCoordinateSelector
+* ChunkScan3dCoordinateScale
+* ChunkScan3dCoordinateOffset
+* ChunkScan3dInvalidDataFlag
+* ChunkScan3dInvalidDataValue
+* ChunkScan3dFocalLength
+* ChunkScan3dAspectRatio
+* ChunkScan3dPrincipalPointU
+* ChunkScan3dPrincipalPointV
+* ChunkScan3dDistanceUnit
+* ChunkScan3dCoordinateSystem
+* ChunkScan3dCoordinateSystemReference
+* ChunkScan3dCoordinateReferenceSelector
+* ChunkScan3dCoordinateReferenceValue
+
+Following chunk features generated by the camera do not correspond to the 3D model - they are chunk (buffer metadata) versions of same-named camera configuration features documented above:
+
+* ChunkComponentSelector
+* ChunkComponentIDValue
+* ChunkBinningHorizontal
+* ChunkBinningVertical
+
+Note: some (few) advanced GigE Vision receivers might be able to read those chunk data features and build the point cloud for you under the hood.
+
+=== EventDataControl
+
+Contains features controlling reception of asynchronous camera events and event data itself. The events are transported over a dedicated channel (called "message channel") in the GigE Vision protocol.
+
+First the features allowing to switch generation and delivery of individual event types ON and OFF.
+
+EventSelector:: Lists all the event types supported by the camera and allows to enable generation & delivery of the selected event using the EventNotification feature. Supported events are:
+    Test::: Intended to allow reliable testing of the events functionality, independent on the actual state of the camera. Required by GigE Vision specification. This test cannot be enabled/disabled using `EventNotification`, it is always enabled. The dedicated TestEventGenerate command feature allows to generate the event.
+    OperationStatusChange::: The event will be generated when the device operation status changes (new value should be read from DeviceOperationStatus).
+
+EventNotification:: Enumeration feature allowing to control (enable/disable) generation of the event type selected in EventSelector. Note that the Test event is always enabled and cannot be disabled. The enumeration options of this feature are:
+    Off::: The event selected in EventSelector is disabled, the camera will not generate any instances of this event type.
+    On::: The event selected in EventSelector is enabled, the camera will send new instances of this event type to the application as they appear. It is up to the application to listen for them and process them.
+
+Next the individual event features allowing to monitor reception of individual event instances and reading data they carry. The SFNC specification defines a convention for naming event related features. For each event type supported by a camera, for example event Foo, there is a subcategory called EventFooData. That subcategory contains feature EventFoo which can be used by the application as a target to listen for GenICam notifications (generated when new event of given type arrives). The subcategory also contains feature EventFooTimestamp carrying device timestamp from the time the event was generated. If the event carries additional data, more features describing that data can be present in the subcategory. The GenIStream SDK tutorial example demonstrates how to use these features.
+
+GenICam standard provides a mechanism to parse the delivered event data and allow the user to read them as any other camera features (event subcategories described above). Most GigE Vision receivers will perform these operations for you under the hood and event features can be read (same as other features) after each received "event". Note that before the first received event of given type (or if events were not enabled), the following features will not be available.
+
+Note for Python users: handling of the device events is currently unreliable in Harvesters.
+
+The following event features adhere to the naming convention described above. The purpose of individual event types is documented in EventSelector (also above).
+
+==== EventTestData
+
+Sub-category carrying features related to the "Test" event type.
+
+EventTest:: Feature intended to be used as a target to register GenICam feature notifications used to monitor received events of the "Test" event type.
+
+EventTestTimestamp:: Timestamp of the last delivered event of the "Test" event type.
+
+==== EventOperationStatusChangeData
+
+Sub-category carrying features related to the "OperationStatusChange" event type.
+
+EventOperationStatusChange:: Feature intended to be used as a target to register GenICam feature notifications used to monitor received events of the "OperationStatusChange" event type.
+
+EventOperationStatusChangeTimestamp:: Timestamp of the last delivered "OperationStatusChange" event.
+
+
+=== TransportLayerControl
+
+Low level features controlling the "transport layer" (GigE Vision) specific parameters.
+
+PayloadSize:: Maximal size of the data to be transferred in single "block" given the current camera configuration. Used by the receiver to allocate stream buffers. This is automatically handled by most GigE Vision receivers.
+
+==== GigEVision
+
+GigE Vision specific sub-category of TransportLayerControl.
+
+GevMACAddress:: MAC address of the device Ethernet interface.
+
+GevCurrentIPAddress:: Current (read-only) IP address of the device.
+
+GevCurrentSubnetMask:: Current (read-only) subnet mask of the device.
+
+GevCurrentDefaultGateway:: Current (read-only) default gateway of the device.
+
+GevCurrentIPConfigurationPersistentIP:: Boolean feature controlling whether the device should attempt to use the persistent IP settings (see GevPersistentIPAddress, GevPersistentSubnetMask and GevPersistentDefaultGateway) within the IP configuration procedure upon the next power cycle. If enabled, the persistent IP is the first IP configuration method considered by the device.
+
+GevCurrentIPConfigurationDHCP:: Boolean feature controlling whether the device should attempt to use the DHCP procedure within the IP configuration procedure upon the next power cycle. If enabled, the DHCP is used only if the persistent IP (GevCurrentIPConfigurationPersistentIP) is disabled or if it fails.
+
+GevCurrentIPConfigurationLLA:: Boolean feature controlling whether the device should attempt to use the LLA (link-local address) protocol within the IP configuration procedure upon the next power cycle. Always enabled, but used only as last resort protocol, if both persistent IP and DHCP options are disabled or if they fail.
+
+GevPersistentIPAddress:: Persistent IP address of the device - to be applied upon next power cycle if the IP configuration option for persistent IP is enabled (refer to GevCurrentIPConfigurationPersistentIP).
+
+GevPersistentSubnetMask:: Persistent subnet mask of the device - to be applied upon next power cycle if the IP configuration option for persistent IP is enabled.
+
+GevPersistentDefaultGateway:: Persistent default gateway of the device - to be applied upon next power cycle if the IP configuration option for persistent IP is enabled.
+
+GevSCPSPacketSize:: Size of the packets (in bytes) the device will use to stream acquired data (images). Most GigE Vision receivers will auto-negotiate optimal size given the device limits and current MTU of the receiver's network interface. It is therefore not recommended to write this feature manually unless one knows well what to do (otherwise stream might fail). For good stream performance (no or minimal packet loss), the packet size should be as big as possible. If the auto-negotiated size is not bigger than 1500, check the configuration of your network card and enable "jumbo frame" support (typically 9k).
+
+GevSCPD:: Allows to control the minimal inter-packet delay to insert among consecutive stream packets (in nanoseconds). Used as elementary flow control mechanism in case of performance problems on receiver side - depending on the stream speed and processing load, the receiver's network stack might be dropping some of the incoming stream packets. Increasing the packet delay (default is zero) will slow down the stream peaks and might help the receiver to cope with the incoming data. Use with care when experiencing performance problems – note that an inter-packet delay that is too large may prevent the camera from transferring all its data. When in doubts, contact us for further advice.
+
+GevDiscoveryAckDelay:: The maximum randomized delay the device will wait to acknowledge a discovery command (in milliseconds). The device persists its value across reboots. Can be useful to avoid a flood of discovery responses arriving at exactly the same time when many cameras are connected to the system. In most cases the default value will work well.
+
+PtpEnable:: Boolean feature enabling/disabling the Precision Time Protocol (PTP) operation of the camera.
+
+=== FileAccessControl
+
+Features related to accessing files on the device. The actual features in this category are not intended to be accessed directly by applications or users, but rather through a protocol defined by the GenICam standard. Most GenICam based software packages implement that protocol and thus hide its details, providing straightforward interface to the files. Refer to the example code in this package.
+
+For this reason, we do not document all the FileAccessControl category features in this chapter (refer to GenICam SFNC document if interested), only the FileSelector feature listing the actual files supported by the Visionary cameras.
+
+FileSelector:: Defines files supported by the device. The GenICam file access protocol implementation uses this feature to select among individual files being accessed. Currently supported files are:
+    SystemMessageLog::: File containing system log messages (warnings, errors, events). Read-only text file in a human-readable tabular format. The individual columns of the log are: 
+    `Level`:::: Error level, one of DEBUG, INFO, WARNING, ERROR, FATAL_ERROR
+    `State`:::: State of the error, one of PERMANENT, ACTIVE, INACTIVE, CLEAR, UNKNOWN
+    `Count`:::: How many times this particular error instance occurred, measuring across total device lifespan
+    `First`:::: Timestamp of its first occurrence in seconds, measuring the total operating time of the device over its lifespan
+    `Last`:::: Timestamp of its last occurrence in seconds, measuring the total operating time of the device over its lifespan
+    `Code`:::: Internal error code, meaningful only to SICK developers
+    `Description & Message`:::: Text description of the error type and the particular error instance
+    DiagnosisDump::: File containing diagnostic information about the device. Can be requested by SICK service for diagnostics in case of specific issues. Read-only binary file.
+    LicenseInformation::: File containing information about licenses (and their texts) for third-party software components used in device firmware. Read-only text file.

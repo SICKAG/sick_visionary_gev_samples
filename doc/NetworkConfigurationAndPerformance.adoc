@@ -1,0 +1,233 @@
+= GigE Vision Network Configuration and Performance Guidelines
+
+In a GigE Vision based system, possibly high volumes of data needs to be transferred over the network. The link bandwidth as well as resources involved in the (image) data acquisition process are finite and potentially shared with other tasks in the system. The GigE Vision data stream is a connectionless UDP-based protocol, therefore without guaranteed delivery (with optional resends of lost packets). If the setup is not planned correctly or if the important components/resources are configured suboptimally, the acquisition results can be suboptimal (mainly loosing part of the data) or fail completely. 
+
+It is therefore recommended to pay attention to the elementary guidelines presented in this document.
+
+The following sections provide overview of the GigE Vision setup and network protocols, recommendations regarding hardware selection, configuration of the network adapter (and its driver) and of the camera itself.
+
+== Overview
+
+=== Possible Configurations
+
+Direct camera to network adapter connection:: The camera is connected directly to the network adapter using an Ethernet cable, without additional components in between. In this simplest case the camera does not need to compete with other devices for the same link, but still the link is not fully dedicated to the image stream - part of the bandwidth will be consumed by control (or asynchronous event) communication or by packet resends. Depending on the host PC (where the receiver is running) performance and CPU load, the packet processing within the host's network stack might not be always fast enough to cope with the incoming data, resulting in packet loss. Following advice from this document will help you to minimize those risks.
+
+Multiple cameras over a switch:: On top of the same problems as in the "direct connection" case, here multiple cameras need to share bandwidth of the switch itself and the link between the switch and the host PC. Care is required to guarantee that the cameras combined data rate does not at any point of time exceed the link capacity and that the switch has sufficient buffering capability to overcome small temporary bursts or data collisions.
+
+General purpose network:: Case when the camera(s) share the network with other general purose traffic (Internet, office, etc.). Such setup should be avoided whenever possible, otherwise unpredictable data stream acquisition problems might occur.
+
+=== GigE Vision Protocols
+
+GigE Vision standard is built around a set of UDP based protocols for communication between the camera ("device" in GigE Vision vocabulary) and the receiver ("control application" in GigE Vision) running on the host PC:
+
+GVCP:: Control protocol for camera discovery, control (reading and writing camera registers) and delivery of asynchronous events. After querying the camera capabilities and the initial configuration phase, the control protocol usually does not generate too much traffic.
+
+GVSP:: Streaming protocol for transfer of the acquired data (range, color, metadata...) including required resends if some of the stream packets get lost. Depending on the data rate (depending mainly on the transferred components and frame rate) and number of cameras sharing the link, the stream can utilize significant (or close to full) bandwidth of the Gigabit Ethernet link. In such case the reliable stream performance will be sensitive to proper configuration of certain network parameters discussed within this document.
+
+=== Stream Packets & Overhead
+
+To deliver the acquired data block (typically containing range, color and metadata) over GigE Vision data stream, it has to be split to individual UDP packets. The packets do not carry only the actual "useful" data payload (the acquired data), but also various headers: Ethernet frame header, IP & UDP headers as well as GigE Vision GVSP protocol header. Dedicated control packets framing start and end of each acquired data block also have to be considered.
+
+For basic overview, the header sizes are 14{nbsp}B for Ethernet, 20{nbsp}B IP, 8{nbsp}B UDP header. The GVSP header depends on actual mode, but will be typically 28{nbsp}B for Visionary camera. When using the standard Ethernet frame (packet) size of up to 1500{nbsp}B, the protocol overhead consumes almost 5% of the stream data. This can be improved when all the involved hardware (mainly the camera and network adapter but also any switch if connected between them) are capable of and configured to use larger packets (so called "jumbo frames"). When using the 9000{nbsp}B jumbo frames, the protocol overhead decreases to less than 1%. More on the jumbo frame topic in a dedicated chapter later in this document.
+
+The bandwidth of the Gigabit Ethernet link is approximately 120{nbsp}MB/s. This includes the said stream protocol overhead and bandwidth portion required for the control protocol and eventual stream packet resends.
+
+== Network Setup & Hardware Selection
+
+=== Hardware Components
+
+It is in general highly recommended to use up-to-date hardware for Gigabit Ethernet - using the cameras with 100 Mb/s networks cannot give satisfactory results and is not officially supported. All components should operate in full-duplex mode.
+
+Network adapter:: Network adapters based on intel Gigabit Ethernet chipsets are time proven choice, although other adapters can be suitable as well. The most important network adapter feature to observe is support for 9{nbsp}kB jumbo frames. Latest official drivers published by the network adapter manufacturer should always be installed. Note that the network adapter configuration options (and examples) in rest of the document are given for the intel adapters - when using other vendors names and supported values of corresponding parameters might differ (refer to the network adapter documentation in such case).
+
+Cables:: Shielded cables certified for use with Gigabit Ethernet. Suitable cables are available from SICK.
+
+Switch:: Most modern switches will work well. Similarly as the network adapter, the switch should support 9{nbsp}kB jumbo frames (and if needed be configured to use them). Depending on the number of connected cameras, the switch should have non-blocking packet forwarding capability and sufficient packet queue buffer memory. This can be important when multiple cameras connected to the switch share a common uplink to the host PC. In such case, when receiving packets from those cameras in parallel, the switch should be able to buffer them temporarily and interleave them on the uplink. Avoid obsolete switch alternatives like hubs which work like a dummy repeaters, copying the incoming packets to all its ports.
+
+=== Firewalls (and Related Topics)
+
+Because the GigE Vision stream is unidirectional (inbound), it could be blocked by firewalls unless special precautions are taken. To prevent this, GigE Vision specification recommends a mechanism allowing to send dedicated "keep alive" packets to the camera's stream port, simulating bidirectional traffic and thus unblocking the firewall. 
+
+The Visionary cameras support this mechanism and when accessing them through SICK GenTL Producer (SICKGigEVistionTL.cti), it will be automatically applied - firewalls should not cause any problems. The same is expected with other modern GigE Vision receivers, such as the major machine vision libraries.
+
+When anyway experiencing stream failures, consider following points:
+
+* The received stream packets can be observed using Wireshark and/or observing the GenTL Producer stream statistics (see xref:doc/GenICamFeaturesOverview_GenTLProducer.adoc[its documentation]).
+* If after starting the acquisition no stream packets are received at all (mainly when using other GigE Vision receiver implementations), check firewalls or other security software running on your system and try to disable them to see if any of them is responsible for the issue.
+* If the stream control packets (leader & trailer) are received, but not the actual payload packets in between, possibly packet size larger than 1500{nbsp}B was configured on the device but the network adapter (or switch) is not configured to support jumbo packets. We highly recommend enabling jumbo packets on all components involved in the connection and always rely on automatic packet size negotiation rather than setting the packet size manually. 
+* If packets are in general delivered but the blocks (images) arrive incomplete, the network stack of the receiver host PC seems to be dropping some of the packets due to performance problems. Review and apply the performance related recommendations further in this document.
+* Some security tools might cause specific problems. For example, Zscaler is known to modify the network stack in a way that upper layers (such as SICK GenTL Producer) discover the network adapter to be running with 1500{nbsp}B MTU, even if jumbo frames are enabled. In that case, the receiver might not be able to negotiate larger packet size. Contact SICK for further advice.
+
+Slightly related, Linux-specific topic is the "reverse path filtering" (rp_filter) sysctl option - the camera discovery could fail for devices residing on wrong subnet if reverse path filtering is switched on in the system. Reverse path filtering is a security option (DDoS prevention) dropping incoming packets on the interface if the reverse path traffic (to the packet source) would not be routed on that interface. In this case the camera's discovery acknowledge packet would be dropped. To prevent this, we recommend to switch off reverse path filtering option on any interfaces where GigE Vision devices are to be discovered. This topic can be ignored if it is guaranteed that all cameras are already configured with correct IP addresses. Refer to the "rp_filter" kernel option documentation if required.
+
+=== Power Management
+
+For streaming receiver applications running over extended period of time without any user input, it might be required to ensure that the Windows power plan settings never allow the computer to go to sleep.
+
+=== IP Configuration
+
+To be able to effectively communicate, each camera must be configured for the same subnet as the host PC network adapter it is connected to. The receiver will be able to discover a device residing on different subnet, but will not be able to establish connection and control the camera without bringing it to the same subnet first.
+
+The decision about the IP addresses to be used by individual components (cameras, network adapters) involved in the system and how the IP addresses are assigned is left as responsibility of the person building the system.
+
+==== Network Adapters
+
+There are multiple options how to configure IP address (including subnet mask) of the network adapter(s) of the host PC - selecting a fixed IP address, getting the IP address assigned over the DHCP protocol or letting the system to assign a link-local address (LLA). Check your operating system documentation for corresponding instructions.
+
+It is important to plan the network adapter's IP configuration to be in sync with configuration of the connected cameras. Be sure that multiple network adapters of the same PC are not configured for the same subnet (note that such scenario can unintentionally happen if multiple network adapters fall back into the LLA address, for example if DHCP negotiation fails on those adapters).
+
+==== Cameras
+
+The GigE Vision cameras perform IP configuration procedure upon startup and upon Ethernet link negotiation (when cable gets re-plugged). GigE Vision standard defines three IP configuration schemes the cameras might use - the actual active scheme is configured by the user:
+
+* Fixed persistent IP address
+* DHCP
+* LLA (link-local address, 169.254.0.0/16)
+
+The IP configuration consists of the IP address, subnet mask and optional default gateway (assigning zero to the default gateway and leaving it unused is usually the best choice). Note that the LLA protocol is always active and used as fallback if the other protocols fail (for example because of address conflicts). As required by the GigE Vision specification, the cameras are delivered off-factory with persistent IP disabled, DHCP/LLA enabled.
+
+For users accessing the cameras through the SICK GenTL Producer, the `ip_config.py` script delivered together with this package provides all functionality required to set the cameras' IP configuration:
+
+* Forcing a temporary IP address (if the camera is currently residing in different subnet and cannot be connected).
+* Selecting a persistent IP configuration (persistent/fixed IP, DHCP or LLA) to be used by the camera upon all subsequent boots (once the camera is connectable, forced already to correct subnet). In particular when assigning a fixed IP address to multiple cameras, be careful to avoid conflicts.
+
+The command line '--help' parameter of the script will provide further information about all commands supported by the script.
+
+When working with the cameras through third party GigE Vision compliant tools, it should be possible to configure the cameras directly using those tools, following advice from their documentation.
+
+==== Time synchronization
+
+The camera synchronizes the time via the PTP Protocol and is enabled by default. 
+If a PTP master is available within the network the camera automatically applies the time of the master.
+If no master is available within the network all cameras within the network will also synchronize their clocks by selecting one of them as master. The most precise clock will be selected as master - devices with actual time synchronization (like GPS receivers) will be preferred.
+Currently only PTP P2P is used (no E2E is supported at the moment)
+
+===== Setting up a ptp (Linux)
+First verify if your devices supports HW Timestamping or only software timestamping by running `ethtool -T <interfaceName>`.
+If the output mentions something like 
+```
+hardware-transmit     (SOF_TIMESTAMPING_TX_HARDWARE)
+hardware-receive      (SOF_TIMESTAMPING_RX_HARDWARE)
+hardware-raw-clock    (SOF_TIMESTAMPING_RAW_HARDWARE)
+```
+Hardware timestamping is supported otherwise only software is available. For hardware timestamping `ptp4l` can be used and for software timestamping `ptpd` 
+
+===== Setting up a ptp master
+* software Timestamping:
+`ptpd -i <interfacename> -M -P -C`
+* hardware Timestamping:
+`ptp4l -i <interfacename> -H -P`
+
+===== Setting up a ptp slave
+* software Timestamping:
+`ptpd -i <interfacename> -S -P -C`
+* hardware Timestamping:
+`ptp4l -i <interfacename> -H -P -s`
+
+===== Getting current ptp status of camera
+The register IEEE1588Status(0x96C) contains the current ptp state of the camera according to IEEE1588-2008:
+[cols="1,10"]
+|===
+|1
+|INITIALIZING
+|2
+|FAULTY
+|3
+|DISABLED
+|4
+|LISTENING
+|5
+|PRE_MASTER
+|6
+|MASTER
+|7
+|PASSIVE
+|8
+|UNCALIBRATED
+|9
+|SLAVE
+|===
+
+===== Enable/disable ptp on camera
+The feature `PtpEnable` controls the ptp function of the device (true = enabled)
+
+
+== Important Configuration Options
+
+=== Packet Size, Jumbo Frames
+
+As already discussed above, the protocol overhead (part of the stream bandwidth used for protocol bookkeeping instead of carrying useful data) is a function of packet size. Since the protocol headers have fixed size, the larger the packets, the smaller the overhead.
+
+On top of that, with bigger packet size fewer packets are required to transfer a single stream data block. Because every stream packet needs to be parsed and dispatched by the host PC, less packets means less packet processing load on the host side and less risk that some of the packets will be dropped within the host's network stack due to overflow of its internal packet queues if the CPU is temporarily not fast enough to process them all.
+
+The standard packet size universally supported in Ethernet is up to 1500{nbsp}B, however, most modern network adapters optionally support larger packet sizes, so called "jumbo frames". For reliable stream performance, it is highly recommended to use only adapters supporting 9{nbsp}kB jumbo frames. Note that the jumbo frame support is usually disabled by default and needs to be explicitly enabled in the network adapter's driver configuration. Refer to your driver documentation for instructions how to enable the jumbo frames.
+
+Note that if the camera is not connected to the network adapter directly but over a switch, the switch must also support the 9{nbsp}kB jumbo frames so that they can be used for streaming.
+
+When the adapter (and eventually the switch) allows jumbo frame use, the camera should be configured to actually use the larger packets. Visionary cameras provide a feature GevSCPSPacketSize for this purpose (see the xref:doc/GenICamFeaturesOverview.adoc[camera features documentation]). However, we do not recommend to select the packet size manually, but rely on automatic negotiation of suitable packet size between the receiver application and the camera. The negotiation procedure involves sending test packets of different sizes between the camera and the receiver application and verifying if they are delivered correctly.
+
+When accesing the camera through SICK GenTL Producer, the packet size negotiation is always performed right after the camera connection. When using 3rd party GigE Vision software, similar negotiation should take place (refer to given software documentation if required). Only if the software in use does not perform the negotiation, the packet size has to be increased manually using the GevSCPSPacketSize feature mentioned before.
+
+Note that depending on the firmware version, the Visionary cameras might support packet sizes very slightly lower than 9{nbsp}kB to avoid issues with misbehaving network adapters. This is OK and the small difference has no real impact on the stream performance.
+
+=== Flow Control, Packet Delay
+
+The inter-packet delay is an elementary stream flow control mechanism defined by the GigE Vision standard. Configuring a packet delay instructs the camera to insert artificial additional delay in between consecutive stream packets being transmitted, thus slowing down the stream. There might be two main reasons to do so:
+
+* The camera is streaming "too fast" and the receiving host PC has problems to cope with the data rate and process all packets correctly. This can be caused by various performance problems on receiver side, typically when its CPU is overloaded by other tasks or not scheduled immediately when a burst of incoming packets arrive. Such situation can result in packets getting dropped within the network stack. Inserting a suitable packet delay can help to spread the packets more evenly in time (rather than sending big burst of packets once a new image is ready) and thus relieving the receiver.
+* Multiple cameras are connected to a single network adapter over a switch, sharing the link between the switch and the adapter. If all of the cameras were streaming data in full Gigabit speed at the same time, the shared link could not cope with all the data and the switch would have to drop the excessive packets. Inserting suitable packet delay can help to lower the maximal throughput of the individual cameras, ensuring that the combined throughput does not exceed the shared link's bandwidth.
+
+When the adapter (and eventually the switch) allows jumbo frame use, the camera should be configured to actually use the larger packets. Visionary cameras provide a feature GevSCPSPacketSize for this purpose (see the xref:doc/GenICamFeaturesOverview.adoc[camera features documentation]). However, we do not recommend to select the packet size manually, but rely on automatic negotiation of suitable packet size between the receiver application and the camera. The negotiation procedure involves sending test packets of different sizes between the camera and the receiver and verifying if they are delivered correctly.
+
+The packet delay can be configured (before the acquisition starts) using camera's feature GevSCPD, in nanoseconds (see also the xref:doc/GenICamFeaturesOverview.adoc[camera features documentation]). The value will be treated by the camera as minimal delay to be inserted between stream packets, the actual delay might be slightly bigger. Keep in mind that with too big delay between packets, the camera might not be able to transmit all acquired data, because the stream output will get slower than the sensor frontend. Remember also, that part of the link bandwidth needs to be reserved for camera control communication and possible lost packet resends. Finally, note that the packet delay necessarily increases the acquisition latency of each block.
+
+For a sufficiently high performance and optimally configured receiver (jumbo frames etc.) it should usually be no problem to acquire the stream in full speed (without any packet delay). Still, there might be temporary peaks in the host processing load or other reasons why it could shortly fall behind, resulting in lost packets. To avoid such problems, it might be good idea to use anyway a packet delay value known to be safe in given configuration (one which always allows to safely transmit all the data at selected frame rate).
+
+=== Receive Socket Buffer Size
+
+Very important option with direct impact (especially under Linux) on flawless performance without loosing packets. Controls size of the socket buffer for receiving the stream data. Maps directly to the SO_RCVBUF socket option. Sufficient size of the receive buffer is essential to overcome temporary periods when the socket handling code is not able to read from the socket as fast as the packets arrive. As soon as the buffer overflows, further incoming packets would be dropped.
+
+When accessing the camera over the SICK GenTL Producer, the socket buffer size can be controlled using the GevStreamReceiveSocketSize feature in its data stream module (see xref:doc/GenICamFeaturesOverview_GenTLProducer.adoc[its documentation]). Third party GigE Vision software might have similar options - refer to its documentation if needed.
+
+Under Linux, setting the socket buffer size as large as allowed on given system usually gives best results. The range of possible values is, however, limited by the sysctl "rmem_max" parameter - you might need to increase it to allow higher socket buffer size values.
+
+Under Windows the effect might not be always as significant as under Linux and beyond certain size it might not improve any more - we recommend to experiment to find optimal value on your system. Configuring the GenTL Producer stream engine's ring buffer size might have bigger impact in this case.
+
+=== Stream Engine Ring Buffer Size
+
+The SICK GenTL Producer separates the "socket draining" and actual "GVSP packet handling" into two distinct threads with a ring buffer in between as an additional measure to overcome temporary "hiccups" in the packet processing speed that could lead to packet loss (refer also to previous section about socket buffer size). This mechanism is proven to help in particular under Windows where increasing the receive socket buffer size itself does not always help as much as under Linux.
+
+The size of the ring buffer (in bytes) is configured using GenTL Producer's data stream feature GevStreamRingBufferSize (see xref:doc/GenICamFeaturesOverview_GenTLProducer.adoc[its documentation]). Its optimal value should be found by experiment when experiencing packet loss. Setting it as high as the size of few full buffers might give best results on Windows systems. On Linux systems, adjusting GevStreamReceiveSocketSize might have greater impact.
+
+=== Other Network Adapter Driver Options
+
+This section mentions few other parameters of the network adapter drivers which may affect performance. The impact of these is not as obvious as impact of the parameters discussed above in dedicated sections. It might be necessary to experiment with following parameters on given target system setup if fine tuning the performance is a top priority - the optimal settings might differ from system to system. Note that the following parameter names are based on the intel network adapters interface - they might differ for other vendors. Even for intel adapters, the actual parameters and their possible values might differ among versions and operating systems, check the corresponding vendor documentation for detailed explanations.
+
+Interrupt moderation:: Allows to reduce number of interrupts signaling packet arrivals, reporting multiple packets within a single interrupt. The effect is use case specific, extreme moderation can even lead to packet loss. Moderation enabled in "adaptive" mode might be a suitable starting point.
+
+Receive buffers/descriptors:: Number of buffers used by the driver when copying data to the protocol memory. Setting it to maximal supported value is usually the best option.
+
+IPV4/UDP checksum offload:: Enable offloading.
+
+Duplex mode:: Always 1Gb/s full duplex (auto negotiation option will achieve the same).
+
+Receive side scaling (RSS):: Allows distribution of the packet processing load across multiple CPUs. To be considered/tested only on multi-camera setups.
+
+=== GenTL Producer Stream Engine Configuration
+
+When accessing the device using the SICK GenTL Producer, we recommend to check xref:doc/GenICamFeaturesOverview_GenTLProducer.adoc[its documentation], in particular the data stream module features. On top of the most important features discussed above, there are further features affecting the stream engine performance as well as stream statistics which might be useful to monitor the actual performance.
+
+////////////////////////////////////////////////////////////////////////////////////
+// TODO: Possible future extensions:
+// - Troubleshooting section?
+// - Links section? (OS and intel driver docu...)
+// - Examples (screenshots, command line how to achieve each task) - but need to be verified and possibly OS-flavor dependent - better to wait for final docu instead
+// - Examples in particular for IP config of NIC and the driver options?
+// - The examples should be also added for rp_filter temporary/permanent settings and maybe also for our ip_config script
+// - add image showing different amount of overhead (headers) for different packet sizes.
+// - add link to the stream timing calculator once available.
+// - add reference to the throughput (etc.) calculator, once ready
+// - in particular if we once provide our own filter driver, say that other filters should be disabled, possibly including wireshark
+// - if further performance tests are done, consider testing and documenting also netdev_max_backlog kernel parameter
+////////////////////////////////////////////////////////////////////////////////////
+

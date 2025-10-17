@@ -1,0 +1,202 @@
+= SICK GenTL Producer (for GigE Vision cameras) Features Overview
+
+This document serves as an overview of the most important & useful GenICam features provided by the SICK GenTL Producer for GigE Vision cameras.  
+It is intended for developers and system integrators working with SICK Visionary cameras and the GenICam GenTL interface, providing a concise overview of relevant features for effective integration and control.
+
+There are various options for accessing GigE Vision-compliant Visionary cameras programmatically. For users without access to a full host-side GigE Vision implementation, SICK provides the GenTL Producer, wrapping all GigE Vision complexity into a standard GenICam GenTL API.
+
+The "GenTL Producer" (SICKGigEVistionTL.cti binary delivered for multiple platforms with this package) can either be used directly using the GenTL API (see https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf[the specification] if required) or through other easy to use tools building on top of it - for example the Python based https://github.com/genicam/harvesters[Harvesters package].
+
+In case of any questions, contact us for further information.
+
+== GenICam Interface Overview
+
+Similar to GigE Vision cameras themselves, also the GenTL Producers expose their functionality through GenICam standard compliant feature description. Wherever possible, the SICK GenTL Producer strictly follows the GenICam GenTL Standard Features Naming Convention (GenTL SFNC).
+
+The current version of the GenTL SFNC document can be downloaded from the https://www.emva.org/wp-content/uploads/GenICam_GenTL_SFNC_1_2.pdf[official website] for further reference where needed.
+
+In most cases, however, the brief description in this document should be fully sufficient and checking the GenTL SFNC document might not be necessary. Actually, many of the features in GenTL SFNC have only informative character, not being directly useful for programming the Visionary cameras - such features are omitted from this overview document (even if implemented by the GenTL Producer).
+
+Note that features might have limited access mode (readability/writability) and some might become read-only or even unavailable depending on other features or current state of the GenTL Producer.
+
+The GenICam GenTL API defines several layers (called "modules") controlling different components within the GenTL Producer. Each module provides its own set of features (so called "node map"). The following chapters provide information about the available features for each module separately. Note that some of the information or functionality provided by the GenTL Producer might also be available when accessing the GenICam interface of the camera itself).
+
+The GenICam GenTL SFNC document sorts features into "categories", which are mainly useful when viewing the features in a GUI application. The categories are not relevant when accessing (reading/writing) the features programmatically. For clarity, we nevertheless sort the features according to their categories in following chapters.
+
+== GenTL System Module Features
+
+The system module is responsible for the "global" properties and information about the GenTL Producer. The features provide mainly just basic information about the GenTL Producer (such as version information or vendor/model names) as well as enumeration of the available interfaces (network cards). None of these features is really important for programming the Visionary cameras, we therefore skip them in this document. If still interested, please refer to the GenTL SFNC specification.
+
+To get access to the system module node map (holding the individual features) in Harvesters, having an established camera connection: ia.system.node_map, where "ia" is the Harvester's ImageAcquirer instance.
+
+== GenTL Interface Module Features
+
+The interface module is responsible for the entity within the system where devices are connected and discovered - in GigE Vision world the interface corresponds to a network card. The interface module features mainly fall into two categories (see following subsections): information about the network card itself and enumeration of the discovered devices, including support for "forcing" a suitable IP address to them if they are currently configured for an IP subnet not matching the network card itself.
+
+To get access to the interface module node map (holding the individual features) in Harvesters, having an established camera connection: ia.interface.node_map, where "ia" is the Harvester's ImageAcquirer instance. Alternatively, before establishing the connection to the device, the interface module of a discovered (not yet open) device can be accessed through an entry in the device info list, such as h.device_info_list[0].parent.node_map (where "h" is the Harvester object). This can be useful in particular when forcing suitable device IP address is required - and is demonstrated in the harvester tutorial script.
+
+The most important features for Visionary camera control are documented per category below (if required, refer to GenTL SFNC for the complete list).
+
+=== InterfaceInformation
+
+GevInterfaceMACAddress:: MAC address of the host's network interface the device is connected to.
+
+GevInterfaceSubnetIPAddress:: IP address of the host's network interface the device is connected to.
+
+GevInterfaceSubnetMask:: Subnet mask of the host's network interface the device is connected to,
+
+GevInterfaceMTU:: Maximum transmission unit (MTU) currently accepted by the host's network interface the device is connected to. Imposes upper limit on the packet size that can be negotiated with the device (configuring the network card to accept 9k jumbo frames is highly recommended for good performance).
+
+=== DeviceEnumeration
+
+Note: when working with Harvesters, avoid executing the DeviceUpdateList command feature - instead use Harvesters device discovery functionality.
+
+DeviceSelector:: Selector feature allowing to loop through the discovered devices currently known by the GenTL Producer. Integer (zero-based) index. Looping through the devices allows to read individual device properties. Also compare & match the devices (based on their ID or other properties) with the device list reported in upper layer tools (such as Harvesters). And finally control them, in particular force the temporary IP address if required. 
+
+DeviceID:: GenTL unique identifier of the device currently selected in DeviceSelector - might be useful in particular to identify the required device from a list of discovered devices.
+
+DeviceVendorName:: Vendor name of the device currently selected in DeviceSelector ("SICK" for Visionary cameras).
+
+DeviceModelName:: Model name of the device currently selected in DeviceSelector (for example "Visionary-B Two").
+
+DeviceAccessStatus:: Access status of the device currently selected in DeviceSelector, as seen at the point of last device-list update. Possible values defined by GenTL SFNC:
+    ReadWrite::: Full access, the device is ready to be open in read-write mode.
+    ReadOnly::: (This option is not used by the SICK GenTL Producer implementation)
+    NoAccess::: The device is seen but unreachable, typically because it is misconfigured with IP address subnet not matching the interface (network card) it is connected to.
+    Busy::: The device is open by another GigE Vision application (running on this or another host).
+    OpenReadWrite::: The device is already open by this GenTL Producer with RW access.
+    OpenReadOnly::: (This option is not used by the SICK GenTL Producer implementation)
+    Unknown::: (This option is not used by the SICK GenTL Producer implementation)
+
+DeviceSerialNumber:: Serial number of the device currently selected in DeviceSelector, as a string.
+
+GevDeviceIPAddress:: Current IP address of the device currently selected in DeviceSelector.
+
+GevDeviceSubnetMask:: Current subnet mask of the device currently selected in DeviceSelector.
+
+GevDeviceGateway:: Current default gateway of the device currently selected in DeviceSelector.
+
+GevDeviceMACAddress:: MAC address of the device currently selected in DeviceSelector.
+
+GevDeviceForceIPAddress:: IP address to be forced (together with subnet mask and gateway) into the device selected in DeviceSelector. This parameter is only used to prepare the desired IP configuration values for the device (together with GevDeviceForceSubnetMask and GevDeviceForceGateway, the settings are actually applied together using GevDeviceForceIP. Use with care, using configuration not matching the interface the device is connected to may render the device unreachable. Intended to fix exactly these kinds of situations. Applicable only on devices that are not currently open (open device will ignore the request). Optionally use GevDeviceProposeIP' to fill this parameter automatically with suitable value.
+
+GevDeviceForceSubnetMask:: Subnet mask to be forced (together with IP address) into the device selected in DeviceSelector. See GevDeviceForceIPAddress for further details.
+
+GevDeviceForceGateway:: Default gateway to be forced (together with IP address) into the device selected in DeviceSelector. See GevDeviceForceIPAddress for further details.
+
+GevDeviceProposeIP:: Generates proposal for suitable IP settings (IP address, subnet mask and default gateway) to the device selected in DeviceSelector. The settings are proposed to match the subnet of the interface where the device is connected, so that the device would be directly reachable. The proposed settings are stored into parameters GevDeviceForceIPAddress, GevDeviceForceSubnetMask and GevDeviceForceGateway and can be applied to the device using GevDeviceForceIP.
+
+GevDeviceForceIP:: Sends request to change current IP settings (IP address, subnet mask and default gateway) to the device selected in DeviceSelector. The requested new settings are those previously stored into parameters GevDeviceForceIPAddress, GevDeviceForceSubnetMask and GevDeviceForceGateway. Use with care, using configuration not matching the interface the device is connected to may render the device unreachable. Intended to fix exactly these kinds of situations. Applicable only on devices that are not currently open, opened devices will ignore the request. The settings will not persist the device's power cycle. The operation will take potentially significant amount of time (seconds), the timeout used to wait for operation completion can be controlled by GevDeviceForceIPTimeout, see its documentation for further details. To query status of the operation, check status of the "is-done" property of the GevDeviceForceIP command parameter after executing it. Once "finished" the actual success of the operation can be read using GevDeviceLastForceIPSuccess.
+
+GevDeviceForceIPTimeout:: Timeout (in microseconds) to wait for result of the GevDeviceForceIP operation. Note that following recommendation of the GigE Vision specification, the device will verify usability (conflicts) of the required IP address through ARP mechanisms, which implies it might need to wait few seconds for the ARP response.
+
+GevDeviceLastForceIPSuccess:: Reports whether the last GevDeviceForceIP operation was successful. This parameter only gives meaningful output after the operation was actually finished: its completion should be queried first by reading back the "is-done" status of the GevDeviceForceIP parameter (see its documentation for further details).
+
+
+== GenTL Local Device Module Features
+
+The local device module is in GenTL terminology GenTL Producer's "proxy" view of the device and its properties (GenTL Producer's side of the connection), contrary to the so called "remote device" representing features of the actual physical device the GenTL Producer attempts to access & control.
+
+To get access to the local device module node map (holding the individual features) in Harvesters, having an established camera connection: ia.device.node_map, where "ia" is the Harvester's ImageAcquirer instance. 
+
+The most important features for Visionary camera control are documented per category below (if required, refer to GenTL SFNC for the complete list).
+
+=== DeviceInformation
+
+DeviceID:: GenTL unique identifier of the device - might be useful in particular to identify the required device from a list of discovered devices.
+
+DeviceSerialNumber:: Serial number of the device of the device as a string.
+
+DeviceUserID:: User-programmable device identifier of the remote device.
+
+DeviceVendorName:: Vendor name of the device ("SICK" for Visionary cameras).
+
+DeviceModelName:: Model name of the device (for example "Visionary-B Two").
+
+GevDeviceIPAddress:: Current IP address of the device.
+
+GevDeviceSubnetMask:: Current subnet mask of the device.
+
+GevDeviceGateway:: Current default gateway of the device.
+
+GevDeviceMACAddress:: MAC address of the device.
+
+
+=== DeviceControl
+
+DeviceLinkHeartbeatMode:: Allows to disable the heartbeat control on the device. The parameter will be only present if supported by given device (true for Visionary devices). It is usually only good idea to disable the heartbeat if debugging the application (to prevent losing the device connection when hitting a breakpoint). When disabling and not re-enabling the device and if the application fails to properly close the connection (such as during crash or hard debugger stop), the device will never assume the connection has expired and will have to be rebooted. Possible values:
+    On::: Heartbeat enabled (default).
+    Off::: Hearbeat disabled (use with care).
+
+DeviceLinkHeartbeatTimeout:: Heartbeat timeout (in microseconds) after which the device disconnects if the application fails to maintain the heartbeat protocol. In most cases leaving the default value intact is the best solution. A possible exception can be to significantly prolong the timeout while debugging, if given device does not support heartbeat disabling.
+
+
+== GenTL Data Stream Module Features
+
+The data stream module controls the streaming functionality of the GenTL Producer (image & metadata acquisition).
+
+To get access to the data stream module node map (holding the individual features) in Harvesters, having an established camera connection: ia.data_streams[0].node_map, where "ia" is the Harvester's ImageAcquirer instance. Note that GenTL supports theoretically multiple data streams per device, however, the current Visionary devices always provide a single data stream, therefore "data_streams[0]".
+
+The most important features for Visionary camera control are documented per category below (if required, refer to GenTL SFNC for the complete list).
+
+=== BufferHandlingControl
+
+StreamBufferHandlingMode:: Selects the mode the streaming engine uses to handle newly acquired data, in particular when the camera runs faster than the application processing. The parameter is writeable only if no acquisition is active. In most cases, the default mode (OldestFirst) is the best option. Note also that the alternative modes might not work 100% as specified in corner cases if no "auxiliary buffers" are configured (StreamAuxiliaryBufferCount is zero). Supported values are:
+    OldestFirst::: The acquired buffers are always delivered in FIFO manner (oldest first). If the acquisition engine receives a new buffer from the camera but has no available free buffer to fill it in, the new data is discarded.
+    OldestFirstOverwrite::: The acquired buffers are always delivered in FIFO manner (oldest first). If the acquisition engine receives a new buffer from the camera but has no available free buffer to fill it in, it checks, whether there are older buffers waiting for delivery, not yet picked up by the Consumer. If yes, it takes the oldest of them, overwrites it with the new data and appends it to the end of the output queue. If the output queue is empty (no buffer available for overwriting), the new data is discarded.
+    NewestOnly::: The output queue of buffers waiting for delivery never contains more than a single (newest) buffer. If the acquisition engine receives a new buffer and there is already an older buffer waiting for delivery in the output queue, the new buffer is placed in the output queue instead and the old one is reused for next acquisition. If there are no available free buffers and the output queue is also empty, new data is discarded.
+
+=== StreamEngineControl
+
+StreamAuxiliaryBufferCount:: Number of auxiliary buffers the stream engine will allocate for acquisition. The size of the buffers depends on the payload size reported by the device. The auxiliary buffers are scheduled for acquisition as needed if no free user buffers are available to fill (typically if the camera is acquiring faster than the application processing). Depending on the StreamBufferHandlingMode feature, the data acquired into the auxiliary buffer(s) can still be delivered to the application, either overwriting older buffers in the output queue or filling free user buffers that became available in the meanwhile. Writeable only if no acquisition is active. Use with care, considering the system resources.
+
+GevStreamMaxPacketGaps:: Maximal number of packet gaps in a block. Affects the amount of resources allocated for the resend mechanism. Consequently this is also implies the maximum number of resend requests sent out per block. When exceeded, the engine will give up trying to finish this block and will discard it. Default value: 30.
+
+GevStreamMaxBlockDuration:: Maximal duration ("on the wire") of a block in microseconds. When it expires, the engine will assume the block trailer (block trailing control packet) should be already received - and if packet resend is supported (true for Visionary cameras), it will ask to resend it. Zero means no limit, which is suitable for example for line scan devices with sparse line triggers. Default value: 0.
+
+GevStreamDeliverIncompleteBlocks:: Flag indicating if incomplete buffers (with one or more missing packets) should be delivered or discarded. Note that if the leader or trailer of a block is missing it will be discarded anyway. Default value: true.
+
+GevStreamFullBlockTerminatesPrev:: Flag indicating whether receiving a complete buffer immediately terminates any previous ones in the acquisition queue, no matter if resend is still pending for them, thus avoiding blocking the full one. Default value: false.
+
+GevStreamPacketOrderDelay:: Controls how long to wait for packets arriving out of order before requesting resends - a time period in microseconds. The main purpose is to avoid resend request too early in situations when out of order packets are expectable. Default value: 10.
+
+GevStreamAbortCheckPeriod:: Interval in microseconds defining how often the packet handling thread checks for stop requests. Shorter time assures faster acquisition stop, but implies higher thread activity at idle times. Default value: 300000.
+
+GevStreamRingBufferSize:: Size of the stream engine ring buffer to store packets (in bytes). The ring buffer separates the socket draining and packet handling threads. The ring buffer can help to overcome performance peaks and prevent packet loss if the system load is very high. The optimal value should be found by experiment when experiencing performance issues (packet loss) with a high speed/bandwidth device mode. Setting it as high as the size of few full buffers might give best results on Windows systems. On Linux systems, adjusting GevStreamReceiveSocketSize might have a greater impact.
+
+GevStreamReceiveSocketSize:: Size (in bytes) of the socket receive buffer. Maps directly to the SO_RCVBUF socket option. On Linux systems, increasing this value significantly, as far as allowed by limit imposed by the sysctl 'rmem_max' parameter usually brings significant improvement when experiencing performance issues (packet loss) with high speed/bandwidth device modes. On Windows systems, increasing the value up to 512000 usually brings performance improvement, increasing any further might have no or even negative impact (subject to test on each system). Instead, adjusting GevStreamRingBufferSize might have greater impact under Windows.
+
+=== DeviceStreamChannelControl
+
+DeviceStreamChannelKeepAliveTimeout:: Interval (in milliseconds) between keep-alive packets sent during active streaming to the device's stream channel port to simulate the stream traffic is outbound rather than inbound, thus helping to stream reliably in presence of a firewall. The actual required interval might be specific to the actual firewall in use. Zero means no keep-alive packets are sent at all.
+
+This category also contains features related to packet size negotiation. However, because the GenTL Producer attempts to negotiate suitable packet size when connecting to the camera, we recommend to rely on that value and thus detailed documentation of corresponding parameters is skipped here.
+
+=== StreamPacketHandlingStats
+
+GevStreamSeenPacketCount:: All packets (even invalid or duplicates) seen by the stream.
+
+GevStreamLostPacketCount:: All packets missing (even after resends) in the delivered blocks. The packets from undelivered (skipped or discarded) blocks are not counted.
+
+GevStreamDeliveredPacketCount:: All packets successfully received in the delivered blocks. The packets from undelivered (skipped or discarded) blocks are not counted.
+
+GevStreamUnavailablePacketCount:: All packets explicitly announced as unavailable (after resend) by the device (contrary to those that were simply silently not resent). This typically means the resend request came too late.
+
+GevStreamDuplicatePacketCount:: Packets that were received twice (typically because the resend request arrived too early).
+
+GevStreamResendCommandCount:: Number of resend requests (no matter if single or multi-packet ones). Each resend is counted, even if sent multiple times for the same packet. Even those belonging to buffers which never get delivered are counted.
+
+GevStreamResendPacketCount:: Number of resend-requested packets. Each resend is counted, even if sent multiple times for the same packet. Even those belonging to buffers which never get delivered are counted. When asking for resend of buffer tail (with unknown number of packets in it) only a single packet is counted.
+
+GevStreamSkippedBlockCount:: Number of blocks that were skipped somewhere (we have never seen any valid packet belonging to them).
+
+GevStreamEngineUnderrunCount:: Number of blocks that were discarded because no buffers were scheduled into the acquisition engine when given block arrived.
+
+GevStreamDiscardedBlockCount:: Number of blocks that were discarded for any reason including corruption, too many missing packets (according to the selected input parameters) or missing leader and/or trailer.
+
+GevStreamIncompleteBlockCount:: Number of blocks that were delivered incomplete (with one or more missing packets in them).
+
+GevStreamOversizedBlockCount:: Number of blocks that were detected as oversized, i.e. one or more packets did not fit into the allocated buffer. Counted no matter if the buffer was actually delivered or not.
+
+
+

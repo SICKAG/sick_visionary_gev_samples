@@ -1,0 +1,25 @@
+= SICK Visionary Gev Samples Changelog
+
+This document provides a summary of all notable changes for the Visionary Gev samples collection.
+For a detailed view of what was changed, please refer to the repository's commit history.
+
+== 1.0.0
+
+=== Changed
+
+=== Fixed
+
+=== Added
+
+* Adds initial version of the Visionary Gev samples
+* Adds initial version of the Visionary Gev samples documentation
+
+=== Known Issues
+
+=== Compatibility
+
+=== Supported devices
+
+* Visionary-T Mini AP
+* Visionary-S AP
+* Visionary-B Two

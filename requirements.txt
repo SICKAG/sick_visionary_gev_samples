@@ -1,0 +1,6 @@
+genicam
+harvesters~=1.4.3
+numpy
+packaging
+plyfile
+pillow

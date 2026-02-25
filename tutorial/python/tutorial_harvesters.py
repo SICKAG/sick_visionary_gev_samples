@@ -1,3 +1,8 @@
+#
+# Copyright (c) 2025 SICK AG, Waldkirch
+#
+# SPDX-License-Identifier: MIT
+
 ###############################################################################################
 # tutorial_harvesters.py: tutorial script demonstrating how to access SICK Visionary cameras
 # with GigE Vision interface over Python.
@@ -7,26 +12,6 @@
 
 # Note that the example was primarily tested with Python 3.8 - refer to Harvesters documentation
 # for eventual other limitations imposed by Harvesters itself
-#
-# Copyright (c) 2025 SICK AG
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# 
-# The above copyright notice and this permission notice (including the next paragraph) shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
 # 
 ###############################################################################################
 
@@ -57,16 +42,12 @@ import genicam.genapi as genapi
 import numpy
 import argparse
 # Other imports required in the sample script
-from importlib.metadata import version as metadata_version
 import sys
-import platform
-import os
 import time
 from PIL import Image
 from plyfile import PlyData, PlyElement
-from packaging.version import Version as packaging_version
-from packaging.specifiers import SpecifierSet as packaging_specifier
 from pathlib import Path
+from common import validate_setup, download_cti_file, get_cti_path
 
 # Version of this script, used for version checks and help output
 __version__ = "1.0.0"
@@ -86,11 +67,10 @@ def main():
   # Using the with statement helps to avoid any cleanup problems, otherwise the object would have
   # to be properly reset on all code paths when it's no more used (refer to Harvesters documentation).
   with Harvester() as h:
-    # "cti" directory is expected to be located in the top level directory of the original repository structure, i.e.
-    # two levels up from the current script directory.
-    # The "cti" directory contains the GenTL Producer binary (SICKGigEVisionTL.cti) and is organized into subdirectories
-    # for each platform supported by the SICK GenTL Producer for GigE Vision.
-
+    # The GenTL Producer binary (SICKGigEVisionTL.cti) for GigE Vision is located on a separate repository. 
+    # We use a helper function to clone the repository into top-level .cti directory.
+    # This is only required to be done for the first time the script is running.  
+    download_cti_file(remove_if_exists=False)
     # The actual filename of the GenTL Producer binary is always the same (SICKGigEVisionTL.cti).
     cti = get_cti_path()
     print("Going to use GenTL Producer file {}".format(cti))
@@ -475,45 +455,6 @@ def main():
 ###############################################################################################
 # Helper functions
 ###############################################################################################
-
-# Prerequisite/version checks, exit in case of a mismatch...
-def validate_setup():
-  # The example assumes a minimal Python version and an exact Harvesters package version.
-  # Because Harvesters is currently under active development, switching to different version might require
-  # changes to this script. Note also that Harvesters itself might imply additional restrictions
-  # on supported Python version - please consult Harvesters documentation if required.
-  MIN_PYTHON_VER = (3, 6)
-  if sys.version_info < MIN_PYTHON_VER:
-    sys.exit("Minimal required Python version for this script is {}.{}, your version is {}".format(*MIN_PYTHON_VER, sys.version))
-  supported_versions = packaging_specifier("~=1.4.0")
-  if packaging_version(metadata_version('harvesters')) not in supported_versions:
-    sys.exit("Required Harvesters version for this script is {}, your version is {}".format(
-        supported_versions, metadata_version('harvesters')))
-
-# Helper to get cti file path corresponding with the platform the script is running on
-def get_cti_path():
-  cti_platform_dir_name = get_cti_dir_name()
-
-  cti_parents = Path(__file__).resolve().parents
-  
-  if len(cti_parents) < 2:
-    sys.exit("Please run the script with the original repository directory structure. The script expects to be run from the 'tutorial/python' directory, with the 'cti' directory in the parent directory.")
-
-  cti_parent = cti_parents[2]
-  CTI_FILENAME = "SICKGigEVisionTL.cti"
-  return os.path.join(cti_parent, "cti", cti_platform_dir_name, CTI_FILENAME)
-
-# Helper to get cti file directory name corresponding with the platform the script is running on
-def get_cti_dir_name():
-  if platform.system() == "Windows":
-    return "windows_x64"
-  if platform.system() == "Linux" and platform.machine() == "x86_64":
-    return "linux_x64"
-  if platform.system() == "Linux" and platform.machine() == "aarch64":
-    return "linux_aarch64"
-
-  # Not one of our recognized platforms, cti file not available
-  sys.exit("GenTL Producer not available on this platform")
 
 # Helper to force a suitable IP address to the camera/device which is currently not accessible due to IP subnet mismatch
 def force_suitable_ip_address(device_info):

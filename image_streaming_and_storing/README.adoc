@@ -1,0 +1,765 @@
+= Image streaming and storing
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+:toc:
+
+This README provides an introduction to the GigE Vision C++ code examples in this folder for streaming and storing images. It also describes how to calculate the point-cloud representation from the acquired range and intensity data.
+
+== How to run the samples
+[NOTE]
+====
+Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+====
+
+Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
+
+**Image streaming**
+[source,bash]
+----
+$ ./build/output/image_streaming -s24000001
+$ ./build/output/image_streaming -s24000001 -w
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/image_streaming -s24000001
+or
+$ ./build/output/<CONFIG>/image_streaming -s24000001 -w
+----
+
+**Multi camera streaming**
+[source,bash]
+----
+$ ./build/output/multi_camera_streaming -s23070123 24000001 ...
+$ ./build/output/multi_camera_streaming -s23070123 -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/multi_camera_streaming -s23070123 24000001 ...
+or
+$ ./build/output/<CONFIG>/multi_camera_streaming -s23070123 -t1000
+----
+
+**Pointcloud streaming**
+[source,bash]
+----
+$ ./build/output/pointcloud_streaming -s24000001
+$ ./build/output/pointcloud_streaming -s24000001 -w
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/pointcloud_streaming -s24000001
+or
+$ ./build/output/<CONFIG>/pointcloud_streaming -s24000001 -w
+----
+
+[NOTE]
+====
+**Performance tips**
+
+* Enable jumbo frames (MTU ≥ 9000) for optimal throughput.
+* Increase packet delay (`GevSCPD`) if network congestion occurs.
+* Ensure exclusive access (AccessStatus = ReadWrite).
+* Verify subnet compatibility between host and device.
+====
+
+== Image streaming and storing
+This example demonstrates how to discover a specific Visionary camera by its serial number, connect to it, configure acquisition parameters, stream frames, and optionally store intensity and range images as BMP files.
+
+=== Usage
+
+When running the sample executable without arguments it will print usage information:
+[source,text]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      serial number of target device (required, e.g., -s23070123)
+  -n<numFrames>   number of frames to get (default: 1)
+  -t<timeout>     discovery timeout in milliseconds (default: 500)
+  -w<writeImgs>   write images to source folder
+
+This sample streams and optionally stores images from a SICK Visionary GigEVision device identified by its serial number.
+----
+
+=== Code example
+==== Initialize the error handle
+Most functions return a GsRet value, indicating whether the call was successful.
+The GsOK macro converts that value to a simple Boolean success/failure result.
+There is one exception to the rule above, functions which are simple getters which just
+return a simple value and are not expected to fail unless they are called with obviously
+broken prerequisites (such as using invalid handle). Such functions return the value
+directly instead of GsRet. All API functions provide an optional last parameter, GsErrorH*, allowing to obtain a handle to the extended error information (in particular the error message) if the function fails. This applies to all functions, including pure getters. The error handle will be created if and only if the function fails.
+
+[source,c++]
+----
+Error error;
+  
+----
+
+==== Initialize the library
+Initialize the library with streamlined error handling. We will use
+this approach for the rest of the tutorial. The idea is: use always the last parameter of each
+function to obtain the extended error info. This allows uniform error checking, no matter if the function returns GsRet or if it is a pure getter function. The throwOnError() helper function will check if there was an error
+and if yes, it reads the associated error message and turns the error to a C++ exception.
+It also automatically releases the error handle, if one was created.
+The second optional parameter of throwOnError() allows to specify a string that will be prepended
+to the actual error message for extra context, if useful.
+[source,c++]
+----
+gsLibraryInit(error.ptr());
+  throwOnError(error, "Failed to initialize GenIStreamC library: ");
+  
+----
+
+==== Library cleanup function
+In presence of exceptions, it is also useful to perform any cleanup, such as gsLibraryClose,
+through a RAII mechanism, so that it is always executed, no matter how the current scope
+is exited (including exception or other early return).
+The ScopeExit utility provides exactly that. After instantiating the scope exit handler below,
+we do not need to care about closing the library any more, it will be done always when
+leaving the current scope (in this case when leaving the try-block surrounding this code).
+
+[source,c++]
+----
+ScopeExit libCloser([=]() { gsLibraryClose(GsIgnoreErrorInfo); });
+  
+----
+
+==== Initialize and run device discovery
+The default device discovery timeout (time to wait for cameras announcing their presence in the network) is sufficient for off-factory Visionary cameras. However, GigE Vision specification defines a configurable delay (typically randomized up to 1 second) the cameras should insert before announcing themselves to avoid flooding the network if many cameras are connected.
+
+[source,c++]
+----
+Discovery discovery;
+  gsLibraryGetDiscovery(discovery.ptr(), error.ptr());
+  throwOnError(error, "Failed to get discovery object: ");
+  
+----
+
+==== Identify target device
+After a successful run of the device discovery we search through the list of discovered cameras to find our specific device by its serial number. We:
+
+- Iterate over all discovered cameras.
+- Compare it to the requested serialNum.
+- If it matches, we store that camera as the targetCamera and stops searching.
+- If no camera matches, we print the info of each discovered camera & an error message. Finally we exit with a non-zero code.
+
+[source,c++]
+----
+DiscoveredCamera targetCamera;
+  bool foundTarget = false;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto pFoundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == pFoundSerialNum)
+    {
+      targetCamera = std::move(discoveredCamera);
+      foundTarget = true;
+      std::cout << "Found target device\n\n";
+      break;
+    }
+  }
+
+  if (!foundTarget)
+  {
+    std::cerr << "Device with serial number '" << serialNum << "' not found\n";
+    std::cerr << "The following devices have been found\n";
+    for (size_t i = 0; i < numCameras; ++i)
+    {
+      DiscoveredCamera discoveredCamera;
+      gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+      throwOnError(error);
+      printDeviceInfo(discoveredCamera, error);
+    }
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== Check device access status
+Before trying to open, we can check the access status of the device.
+If the status is "NoAccess", it is most likely a wrong IP address (not matching the subnet of the network card it is connected to). 
+
+A suitable temporary IP address can also be forced into the device, although configuring a proper persistent IP is recommended. For more information see xref:../finding_and_connecting_devices/cpp/configure_sensor.cpp[Configure sensor sample].
+
+If the access status is still not "ReadWrite" (meaning it is ready to open) or if we failed for any reason to
+rediscover the camera, stop the example. This can happen because of multiple reasons, including that the camera
+is already open by another application and is beyond the scope of this example.
+
+[source,c++]
+----
+auto accessStatus = gsDiscoveredCameraGetAccessStatus(targetCamera, error.ptr());
+  throwOnError(error);
+  if (accessStatus != egsAccessStatusReadWrite)
+  {
+    std::cerr << "The discovered camera is not ready to open"
+              << "\n";
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== Connect to camera and create parameters
+Connect to the camera to be able to configure it and acquire images. After a successful connection our example will "own" the camera and no other application will be able to connect. For the reasons described also above, the
+call can still fail if another application managed to connect in the meanwhile. Same comments apply about the use of shared_ptr to maintain ownership of the camera object (and keeping the connection open through it).
+Side note: after this point the discoveredCamera handle is no more used and could also be released if desired.
+
+[source,c++]
+----
+Camera camera;
+  gsDiscoveryConnectToCamera(discovery, targetCamera, camera.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+Now we can get access to the device parameters - GenICam map of feature nodes defining user interface of the device. We can use these features to configure the device properties. For details about individual available parameters, their data types, limits and mutual relationships, refer to the camera feature documentation delivered together with this package.
+[source,c++]
+----
+Parameters parameters;
+  gsCameraCreateParameters(camera, parameters.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Enable components
+Enable both acquired image components (Range data and RGB intensity data) to be delivered with the stream.
+
+IMPORTANT: At least one of the components should always be enabled. While the camera itself allows streaming chunk data only, the current version of GenIStreamC is not (yet) ready for such mode.
+
+The basic IMU data is not needed / used in this sample. Hence, we can disable this component. Note however that the IMU component is not implemented by all models in the Visionary camera family, therefore we should check its presence before trying to use it (to keep this example generic for all Visionary camera models). The access mode related checks are implemented as pure getters in GenIStreamC, returning directly the GsBool value (GsFalse fallback in case of any problem), thus we can skip the error checking safely.     
+
+[source,c++]
+----
+gsParametersSetEnum(parameters, "ComponentSelector", "Range", error.ptr());
+  throwOnError(error);
+  gsParametersSetBool(parameters, "ComponentEnable", GsTrue, error.ptr());
+  throwOnError(error);
+  gsParametersSetEnum(parameters, "ComponentSelector", "Intensity", error.ptr());
+  throwOnError(error);
+  gsParametersSetBool(parameters, "ComponentEnable", GsTrue, error.ptr());
+  throwOnError(error);
+  
+----
+[source,c++]
+----
+if (GsIsTrue(gsParametersIsImplementedEnumEntry(parameters, "ComponentSelector", "ImuBasic", GsIgnoreErrorInfo)))
+  {
+    gsParametersSetEnum(parameters, "ComponentSelector", "ImuBasic", error.ptr());
+    throwOnError(error);
+    gsParametersSetBool(parameters, "ComponentEnable", GsFalse, error.ptr());
+    throwOnError(error);
+  }
+  
+----
+
+==== Activate chunk mode
+Ensure that "chunk data" is enabled (chunk data is again a GenICam term for metadata transferred in the stream), for the Visionary devices it especially carries the camera intrinsic parameters required to build the point cloud.
+
+[source,c++]
+----
+gsParametersSetBool(parameters, "ChunkModeActive", GsTrue, error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Adjust frame rate and packet delay
+For purpose of this test, set a lower frame rate and insert an "inter-packet delay" to slow the stream and make this example reliable in all setups - note that to reach good results (mainly no lost packets) with full-speed stream, the receiver should be running on a well performing and optimized system. Most importantly the network card should be configured to allow receiving larger packets ("jumbo frames"). Find more info in the camera documentation. Note also that with small negotiated packet size (implying many packets required to transfer each frame) and following (relatively large) inter-packet delay, the camera might be producing frames faster then their packets can be sent out, resulting in dropped frames on camera side. Please note also that to be able to reliably configure frame rate, we are first switching the auto-exposure feature "off" (frame rate feature would not be available otherwise). This is an example of a feature dependency to be considered (mentioned in camera features documentation). Because the camera keeps its configuration across multiple connections, one should keep in mind that when freshly connected, the camera is in the state where it was left during the previous session.
+As one more complication, the ExposureAuto feature is not supported on all Visionary camera models, therefore we
+need to check if given GenICam feature is implemented before accessing it (to keep this generic for all camera models). Note that you could use similar checks also for other feature-access-mode checks such as whether given feature is currently readable or writable - might come handy when accessing features depending on current camera state.
+
+[source,c++]
+----
+if (GsIsTrue(gsParametersIsImplemented(parameters, "ExposureAuto", GsIgnoreErrorInfo)))
+  {
+    // ExposureAuto functionality is currently only implemented for the Range exposure on Visionary cameras.
+    if (GsIsTrue(gsParametersIsImplemented(parameters, "ExposureTimeSelector", GsIgnoreErrorInfo)))
+    {
+      gsParametersSetEnum(parameters, "ExposureTimeSelector", "Range", error.ptr());
+      throwOnError(error);
+    }
+
+    gsParametersSetEnum(parameters, "ExposureAuto", "Off", error.ptr());
+    throwOnError(error);
+  }
+  gsParametersSetFloat(parameters, "AcquisitionFrameRate", 5.0, error.ptr()); // [Hz]
+  throwOnError(error);
+  gsParametersSetInt(parameters, "GevSCPD", 100000, error.ptr()); // (packet delay [ns]
+  throwOnError(error);
+  
+----
+
+==== Set additional camera parameters
+Refer to the camera documentation to learn about other parameters, such as ExposureAuto, MultiSlopeMode (HDR...)
+or Scan3dDataFilterSelector (ValidationFilter) which can have significant impact on the output quality,
+but depend on the actual scene and conditions. Assuming that this tutorial is usually executed in developer's "office conditions" (indoor, low light levels),
+thus we attempt below to set few more parameters, trying to achieve reasonable output quality in such conditions.
+It should be understood, however, that this selection is sensitive to actual environment and you might need to adjust them if the output is not good enough.
+In particular, we disable auto-exposure (already done above), set long enough exposure time and apply strongest possible validation filter level to eliminate most unwanted outliers
+(in the range data). The actual suitable exposure time value strongly depends on your working conditions and the camera model, please adjust it as needed
+when getting poor output results. One more camera specific note: if currently tested camera models supports configuring the exposure time separately
+for the range and intensity image sensor, we should specify which one we mean. 
+
+NOTE: Once again the checks for availability of features which are implemented
+only in a subset of the Visionary camera models. When targeting a concrete model with known set of supported features, you could skip those checks.
+
+[source,c++]
+----
+if (GsIsTrue(gsParametersIsImplemented(parameters, "ExposureTimeSelector", GsIgnoreErrorInfo)))
+  {
+    gsParametersSetEnum(parameters, "ExposureTimeSelector", "Range", error.ptr());
+    throwOnError(error);
+  }
+  if (GsIsTrue(gsParametersIsImplemented(parameters, "MultiSlopeMode", GsIgnoreErrorInfo)))
+  {
+    gsParametersSetEnum(parameters, "MultiSlopeMode", "Off", error.ptr());
+    throwOnError(error);
+  }
+  if (GsIsTrue(gsParametersIsImplemented(parameters, "ExposureTime", GsIgnoreErrorInfo)))
+  {
+    double maxExpTime = 0.0;
+    gsParametersGetFloatMax(parameters, "ExposureTime", &maxExpTime, error.ptr());
+    throwOnError(error);
+    gsParametersSetFloat(parameters, "ExposureTime", std::min(25000.0, maxExpTime), error.ptr());
+    throwOnError(error);
+  }
+  if (GsIsTrue(gsParametersIsImplementedEnumEntry(parameters, "Scan3dDataFilterSelector", "ValidationFilter",
+                                                  GsIgnoreErrorInfo)))
+  {
+    gsParametersSetEnum(parameters, "Scan3dDataFilterSelector", "ValidationFilter", error.ptr());
+    throwOnError(error);
+    gsParametersSetBool(parameters, "Scan3dDataFilterEnable", GsTrue, error.ptr());
+    throwOnError(error);
+    gsParametersSetInt(parameters, "Scan3dDepthValidationFilterLevel", -3, error.ptr());
+    throwOnError(error);
+  }
+  
+----
+
+==== Check negotiated packet size
+The GenTL Producer will attempt to negotiate with the camera highest possible packet size supported by all the involved network components. If the negotiated packet size is not bigger than the standard 1500B, likely the above mentioned jumbo frame support was not enabled on the network card or the camera is connected through a switch without jumbo frame support. For the purpose of this tests, let's just issue a warning, for real world use this should be addressed properly.
+
+The only exception is the Visionary-T Mini camera model, which does not support jumbo frames itself
+and reports max supported packet size value to be 1500 - issue the warning only for models supporting
+larger packet sizes. The Visionary-T Mini data rate is not that high and packet size not that important.
+
+[source,c++]
+----
+int64_t packetSize = 0;
+  gsParametersGetInt(parameters, "GevSCPSPacketSize", &packetSize, error.ptr());
+  throwOnError(error);
+  std::cout << "Negotiated packet size: " << packetSize << "\n";
+
+  int64_t maxPacketSize = 0;
+  gsParametersGetIntMax(parameters, "GevSCPSPacketSize", &maxPacketSize, error.ptr());
+  throwOnError(error);
+  if (packetSize <= 1500 && maxPacketSize > 1500)
+  {
+    std::cout << "BEWARE: failed to negotiate larger packet size (>1500B), enable jumbo frame support on the network "
+                 "card for optimal performance"
+              << "\n";
+  }
+  
+----
+
+==== Create frame grabber and start acquisition
+Finally, before starting acquisition, it is usually useful to increase the default number of buffers GenIStream will use for acquisition - this can help overcome possible temporary hiccups in the buffer processing on GenIStream/application side.
+
+[source,c++]
+----
+const size_t numBuffers = 10;
+  FrameGrabber grabber;
+  gsCameraCreateFrameGrabber(camera, numBuffers, grabber.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+Now we can start the acquisition. Note that during active acquisition many of the camera parameters will be locked (not writable).
+
+The gsFrameGrabberGrabNext() function lets the "grabber" to acquire a new buffer/image
+and provide higher level information about the result. It also controls the buffer ownership - as soon as the frame object (GsFrameH handle or its C++ wrapper) is released, the buffer is automatically returned to the acquisition engine for refill - it is important to release the frame objects as soon as you're done with given buffer. 
+When acquiring in a loop and using the helper RAII handle wrappers (such as in this example), 
+the object is naturally released when going out of scope at the end of each loop.
+
+First we check if the operation was successful. Besides a successfully acquired frame, the result could also contain information about a failure (timeout, aborted) or information about lost frames.
+See detailed documentation of gsGrabResultHasFrame() and its sibling functions for further details.
+
+When we received a good frame, we print its frame ID. Skipped IDs signal any kind of acquisition problem:
+
+- Dropped frame(s) (due to corrupted/lost packets)
+- Queue overflow on camera side (cannot send all required packets possibly due to too long packet delay) 
+- Queue "underflow" in the receiver side
+
+Most of these cases usually signal performance problems on the receiver and/or its network stack.
+
+If we detected lost frames (possible reasons described above), we just print the information and continue - next valid frame should be delivered through the next gsFrameGrabberGrabNext() call.
+Other cases mean either the acquisition was aborted (e.g. if it was stopped from another thread) or other kind of grab failure - in this simple example let's just exit in such case.
+
+[source,c++]
+----
+gsFrameGrabberStart(grabber, error.ptr());
+  throwOnError(error);
+
+  std::cout << "Going to acquire " << numFrames << " frame(s)"
+            << "\n";
+  for (auto iNumAcquired = 0; iNumAcquired < numFrames; /* incremented inside the loop */)
+  {
+    GrabResult grabResult;
+    gsFrameGrabberGrabNext(grabber, grabResult.ptr(), error.ptr());
+    throwOnError(error);
+
+    if (GsIsTrue(gsGrabResultHasFrame(grabResult, GsIgnoreErrorInfo)))
+    {
+      Frame frame;
+      // (GsFalse means we don't want exceptions thrown for incomplete frames)
+      gsGrabResultGetFrame(grabResult, GsFalse, frame.ptr(), error.ptr());
+      throwOnError(error);
+      auto frameId = gsFrameGetId(frame, GsIgnoreErrorInfo);
+      std::cout << "\tAcquired frame ID " << frameId << "\n";
+      ++iNumAcquired;
+      
+----
+
+==== Get components from each frame
+The acquired buffer will contain one or more "components". Because we have enabled "Range" and "Intensity" components when configuring the device above, those two should always be delivered. The GenIStream grabber interface will automatically identify and deliver those components to us.
+
+IMPORTANT: For Visionary cameras the other component types (e.g. "reflectance") offered by the frame
+interface are not relevant (those are used by other camera types).
+
+Beware: the calls will fail if given components are not present in the acquired frame (e.g. if you did not enable them in the configuration phase).
+
+Print basic information about the two acquired components. Note however, that for the initial releases of the Visionary cameras, the size and pixel format of the components is usually fixed - with the exception of component size on models supporting the binning features.
+
+To identify the pixel formats based on the GenICam PFNC standard, we use the identifiers from the official PFNC header file, which also contains additional utilities like GetPixelFormatName() providing additional information for every standard format.
+
+The intensity data for Visionary models are expected either in BGR8 format (each pixel consisting 
+of three uint8 values, B-G-R) or in Mono16 format (each pixel being a single uint16 value),
+depending on the actual camera model you are testing with.
+
+The range data are expected in COORD_3D_C16 format for Visionary - pixels carrying uint16 values,
+hence the cast to utilize per-pixel access.
+
+[source,c++]
+----
+Component cmpRange;
+      gsFrameGetRange(frame, cmpRange.ptr(), error.ptr());
+      throwOnError(error);
+      Component cmpIntensity;
+      gsFrameGetIntensity(frame, cmpIntensity.ptr(), error.ptr());
+      throwOnError(error);
+
+      auto intensityW = gsComponentGetWidth(cmpIntensity, GsIgnoreErrorInfo);
+      auto intensityH = gsComponentGetDeliveredHeight(cmpIntensity, GsIgnoreErrorInfo);
+      auto intensityFmt = gsComponentGetPixelFormat(cmpIntensity, GsIgnoreErrorInfo);
+      std::cout << "The frame contains intensity component, size: " << intensityW << "x" << intensityH
+                << ", pixel format " << GetPixelFormatName(PfncFormat(intensityFmt)) << "\n";
+      // The intensity data for Visionary models are expected either in BGR8 format (each pixel consisting
+      // of three uint8 values, B-G-R) or in Mono16 format (each pixel being a single uint16 value),
+      // depending on the actual camera model you are testing with.
+      if (intensityFmt != PFNC_BGR8 && intensityFmt != PFNC_Mono16)
+      {
+        std::cerr << "\tUnexpected pixel format for intensity data, BGR8 or Mono16 data expected"
+                  << "\n";
+        return EXIT_FAILURE;
+      }
+      auto const* pIntensityData = gsComponentGetData(cmpIntensity, GsIgnoreErrorInfo);
+
+      auto rangeW = gsComponentGetWidth(cmpRange, GsIgnoreErrorInfo);
+      auto rangeH = gsComponentGetDeliveredHeight(cmpRange, GsIgnoreErrorInfo);
+      auto rangeFmt = gsComponentGetPixelFormat(cmpRange, GsIgnoreErrorInfo);
+      std::cout << "The frame contains range component, size: " << rangeW << "x" << rangeH << ", pixel format "
+                << GetPixelFormatName(PfncFormat(rangeFmt)) << "\n";
+      // The range data are expected in COORD_3D_C16 format for Visionary - pixels carrying uint16 values,
+      // hence the cast to utilize per-pixel access.
+      if (rangeFmt != PFNC_Coord3D_C16)
+      {
+        std::cerr << "\tUnexpected pixel format for range data, Coord3D_C16 data expected"
+                  << "\n";
+        return EXIT_FAILURE;
+      }
+      auto const* pRangeData = reinterpret_cast<const uint16_t*>(gsComponentGetData(cmpRange, GsIgnoreErrorInfo));
+
+      
+----
+
+==== Format data and store components as BMP
+Finally we store the two acquired components as images to the disk to demonstrate GenIStreamC data access.
+See also the code above querying the component properties - however, for now we can rely also on the fact
+that the pixel format used by the image components (intensity and range) is always the same
+on Visionary cameras (it might not be the case in future firmware releases).
+
+[source,c++]
+----
+std::vector<uint8_t> monoAsBGR; // (converted data if required)
+      const uint8_t* pIntensityDataBgr = nullptr;
+      if (intensityFmt == PFNC_BGR8)
+      {
+        // The camera outputs BGR8 which is exactly what we need to for SimpleBMP output.
+        pIntensityDataBgr = reinterpret_cast<const uint8_t*>(pIntensityData);
+      }
+      else
+      {
+        // The other alternative is Mono16.
+        assert(intensityFmt == PFNC_Mono16);
+        monoAsBGR = bgr8FromMono16(pIntensityData, intensityW, intensityH);
+        pIntensityDataBgr = monoAsBGR.data();
+      }
+      assert(pIntensityDataBgr != nullptr);
+      // The range is delivered as single channel 16-bit data, so we need to build what SimpleBMP needs.
+      // Note that this modified image is not intended for further processing, the only goal is to make it easily
+      // viewable
+      auto rangeAsBGR = bgr8FromMono16(pRangeData, rangeW, rangeH);
+      
+----
+
+Storing the data in BMP format simply because the format is trivial - the export is done using xref:./../shared/cpp/3pp/simplebmp.cpp[a tiny
+SimpleBMP library]. SimpleBMP assumes the data in BGR 8-bit format - prepare the data in that shape depending on the actual output format used by the camera under test (remember that can be either BGR8 or Mono16, see above).
+
+[source,c++]
+----
+auto intensityFile = std::string("intensity") + std::to_string(frameId) + ".bmp";
+        auto intensityPath = std::filesystem::current_path() / "image_streaming_and_storing" / "cpp" / intensityFile;
+        intensityPath.make_preferred();
+        SimpleBMP::save(static_cast<int>(intensityW), static_cast<int>(intensityH), pIntensityDataBgr,
+                        intensityPath.string().c_str());
+
+        auto rangeFile = std::string("range") + std::to_string(frameId) + ".bmp";
+        auto rangePath = std::filesystem::current_path() / "image_streaming_and_storing" / "cpp" / rangeFile;
+        rangePath.make_preferred();
+        SimpleBMP::save(static_cast<int>(rangeW), static_cast<int>(rangeH), rangeAsBGR.data(),
+                        rangePath.string().c_str());
+        
+----
+
+== Multi camera streaming
+This example extends the above sample to work with multiple cameras.
+
+=== Usage
+When running the sample executable without arguments it will print usage information:
+
+[source,text]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serialNumbers>      serial number(s) of target device(s) (required, e.g., -s23070123)
+  -n<numFrames>   number of frames to get (default: 1)
+  -t<timeout>     discovery timeout in milliseconds (default: 1000)
+
+This sample shows how to stream and store images from multiple SICK Visionary GigE devices identified by their serial number. The devices must be reachable on the network.
+
+Examples:
+  ./build/output/multi_camera_streaming -s23070123 or -s 23070123 24000001 ...
+  ./build/output/multi_camera_streaming -s23070123 -t1000
+  ./build/output/multi_camera_streaming -s23070123 -t1000 -n10
+----
+
+=== Code Example
+For detailed explanation look at the above sample <<Image streaming and storing>>
+
+== Pointcloud computing
+This example demonstrates how to discover a specific Visionary camera by its serial number, connect to it, configure acquisition parameters, stream frames. The frame is then used to create a pointcloud and store it to the disk.
+
+=== Usage
+
+When running the sample executable without arguments it will print usage information:
+[source,text]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      serial number of target device (required, e.g., -s23070123)
+  -n<numFrames>   number of frames to get (default: 1)
+  -t<timeout>     discovery timeout in milliseconds (default: 1100)
+  -w<writeImgs>   write images to source folder
+
+This sample shows how to stream and store images from a SICK Visionary GigE device
+identified by its serial number. The device must be reachable on the network.
+
+Examples:
+  ./build/output/pointcloud_compute -s23070123
+  ./build/output/pointcloud_compute -s23070123 -t1000
+  ./build/output/pointcloud_compute -s23070123 -t1000 -n10
+----
+
+=== Code Example
+
+Up until getting the individual components from the acquired frame this sample matches the <<image streaming and storing>> sample.
+Please refer to the above code explanation starting from <<Initialize the error handle>> to <<Format data and store components as BMP>>.
+
+==== Get camera intrinsics
+
+Besides accessing the actual acquired data of range and intensity components, to compute the point cloud real world coordinates, we'll need the corresponding parameters (camera intrinsics) to compute it.
+These are delivered, as usual in GigE Vision & GenICam world, within the stream "per buffer" metadata, called "chunk data" in GenICam. 
+
+NOTE: Note that we have enabled delivery of the chunk data during the device configuration above. 
+
+GenICam standard provides means to access the chunk data through the same "node map" (accessible over the GsParametersH interface in GenIStreamC) as the device configuration features - and GenIStreamC library ensures that the metadata (if delivered with the buffer) is connected to the node map while you are working with an acquired GsFrameH object. 
+
+IMPORTANT: Note that the chunk features always refer to the LAST successfully grabbed frame (and 
+before grabbing the first frame, no chunk data will be available). An attempt to read the chunk data features when no buffer is fetched or when the chunk data was not delivered will fail.
+
+Visionary device intrinsics will stay the same for all buffers during the acquisition session, but it is in general good practice to read the chunk data per buffer, because for other chunk parameters or other device types they might actually change frame by frame. We read the important camera intrinsics below (also refer to GenICam SFNC standard and PointCloudGeneration.pdf for detailed explanations).
+
+[source,c++]
+----
+double focalLength = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dFocalLength", &focalLength, error.ptr());
+      throwOnError(error);
+      double aspectRatio = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dAspectRatio", &aspectRatio, error.ptr());
+      throwOnError(error);
+      double princPtU = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dPrincipalPointU", &princPtU, error.ptr());
+      throwOnError(error);
+      double princPtV = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dPrincipalPointV", &princPtV, error.ptr());
+      throwOnError(error);
+
+      // Read also the scale / offset to be applied on the "coordinate C" (acquired range value).
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateSelector", "CoordinateC", error.ptr());
+      throwOnError(error);
+      double coordCScale = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateScale", &coordCScale, error.ptr());
+      throwOnError(error);
+      double coordCOffset = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateOffset", &coordCOffset, error.ptr());
+      throwOnError(error);
+
+      // Read information about the range value used to flag an invalid pixel (carrying no useful measurement)
+      GsBool invalidFlagUsed = GsFalse;
+      gsParametersGetBool(parameters, "ChunkScan3dInvalidDataFlag", &invalidFlagUsed, error.ptr());
+      throwOnError(error);
+      double invalidFlagValue = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dInvalidDataValue", &invalidFlagValue, error.ptr());
+      throwOnError(error);
+
+      String outputMode;
+      gsParametersGetEnum(parameters, "ChunkScan3dOutputMode", outputMode.ptr(), error.ptr());
+      throwOnError(error);
+
+      // Optional: anchor-to-reference coordinate system transformation
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "RotationX", error.ptr());
+      throwOnError(error);
+      double refCoordRotX = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordRotX, error.ptr());
+      throwOnError(error);
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "RotationY", error.ptr());
+      throwOnError(error);
+      double refCoordRotY = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordRotY, error.ptr());
+      throwOnError(error);
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "RotationZ", error.ptr());
+      throwOnError(error);
+      double refCoordRotZ = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordRotZ, error.ptr());
+      throwOnError(error);
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "TranslationX", error.ptr());
+      throwOnError(error);
+      double refCoordTransX = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordTransX, error.ptr());
+      throwOnError(error);
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "TranslationY", error.ptr());
+      throwOnError(error);
+      double refCoordTransY = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordTransY, error.ptr());
+      throwOnError(error);
+      gsParametersSetEnum(parameters, "ChunkScan3dCoordinateReferenceSelector", "TranslationZ", error.ptr());
+      throwOnError(error);
+      double refCoordTransZ = 0.0;
+      gsParametersGetFloat(parameters, "ChunkScan3dCoordinateReferenceValue", &refCoordTransZ, error.ptr());
+      throwOnError(error);
+      
+----
+
+==== Compute pointcloud
+
+Finally, let's also demonstrate, how a point cloud with all three world coordinates could be computed from the acquired range data. The algorithm is described in PointCloudGeneration.pdf and mostly relies on principles & intrinsic parameters in GenICam SFNC standard - only the new ChunkScan3dOutputMode "ProjectedC" is currently still in ratification process, scheduled to be released with next official SFNC version.
+
+To be able to review the result, we are going to store the computed point cloud to the disk in the .ply format, using the hapPLY library (see again the helpers subdirectory). The point data are therefore being stored in the data structures expected by the hapPLY library.
+
+On current Visionary camera models the dimensions of the range and intensity components are either exactly equal, or the intensity component is twice as big (also depending on binning configuration on models supporting binning). This needs to be considered when overlaying the intensity "colors" on the point cloud (range values).
+  
+For now let's just rely on this - the approach might get even a bit more complicated if in future some of the
+cameras support other size-affecting features such as cropping. On the other hand, on cameras where the range
+and intensity image are always equal sized (such as on Visionary-B Two), the scaling topic can be ignored.
+
+[source,c++]
+----
+std::vector<std::array<double, 3>> pointCoordinates;
+      std::vector<std::array<unsigned char, 3>> pointColors;
+
+      auto const maxPoints = rangeW * rangeH;
+      pointCoordinates.reserve(maxPoints);
+      pointColors.reserve(maxPoints);
+      auto const intensityScaleX = intensityW / rangeW;
+      auto const intensityScaleY = intensityH / rangeH;
+      // Calculating the point coordinates pixel by pixel. Focusing on clear demonstration of the algorithm, not on
+      // performance and user app might organize/use the points differently.
+      for (auto row = 0u; row < rangeH; ++row)
+      {
+        for (auto col = 0u; col < rangeW; ++col)
+        {
+          auto const rangePixelOffset = row * rangeW + col;
+          // For simplicity we'll pick directly a single intensity pixel for overlay even if the intensity is scaled,
+          // more advanced approach could involve some kind of interpolation.
+          auto const intensityPixelOffset = row * intensityScaleY * intensityW + col * intensityScaleX;
+
+          // Raw range-coordinate value delivered by the camera for given pixel
+          auto coordCValue = pRangeData[rangePixelOffset];
+
+          // Remember that not all pixels might carry a valid measurement - the invalid ones might be marked using the
+          // corresponding invalid data flag. The actual use and value of the flag was read together with the intrinsics
+          // from chunk data above. Current version of the Visionary cameras always switch use of the flag ON (true) and
+          // the flag value is fixed at 0. Zero delivered range pixels therefore denote invalid pixels - let's filter
+          // them out (skip them) of the point cloud output. The following lines anyway rely on the generically
+          // retrieved invalid value parameters.
+          if (invalidFlagUsed && invalidFlagValue == coordCValue)
+          {
+            continue;
+          }
+
+          // The X / Y coordinate per - pixel multiplicators
+          // (Note: these can be also precomputed just once within the acquisition loop, relying on the fact that the
+          // intrinsic parameters will not change during the acquisition)
+          auto xp = (col - princPtU) / focalLength;
+          auto yp = (row - princPtV) / (focalLength * aspectRatio);
+
+          // The actual coordinate values xc / yc / zc for each pixel are all computed from the measured range (depth)
+          // values. The distance units used by Visionary are millimeters (could also be "formally" queried from
+          // ChunkScan3dDistanceUnit).
+          auto scaledC = coordCValue * coordCScale + coordCOffset;
+          auto xc = xp * scaledC;
+          auto yc = yp * scaledC;
+          auto zc = scaledC;
+          pointCoordinates.push_back({xc, yc, zc});
+
+          // Note that the computed coordinates are in camera's native "Anchor" coordinate system which is related to
+          // its internal geometry and might be affected by current operating mode and sensor mounting deviations.
+          // Compare this to the "Reference" coordinate system with origin in the center of camera's front surface and Z
+          // pointing out of the camera. When conversion to the Reference coordinate system is required, it can be
+          // performed here using the transformation parameters queried above, in following order: 1. refCoordRotX, 2.
+          // refCoordRotY, 3. refCoordRotZ, 4. all translations.
+
+          // Store also the R-G-B channel values for this pixel to allow adding the intensity-color overlay to the
+          // ouptut PLY file
+          auto b = pIntensityDataBgr[3 * intensityPixelOffset];
+          auto g = pIntensityDataBgr[3 * intensityPixelOffset + 1];
+          auto r = pIntensityDataBgr[3 * intensityPixelOffset + 2];
+          pointColors.push_back({r, g, b});
+        }
+      }
+      std::cout << "Number of valid points: " << pointCoordinates.size() << "\n";
+      happly::PLYData ply;
+      ply.addVertexPositions(pointCoordinates);
+      ply.addVertexColors(pointColors);
+      if (writePLY)
+      {
+        auto pointCloudFile = std::string("pointcloud_") + std::to_string(frameId) + ".ply";
+        auto pointCloudFp = std::filesystem::current_path() / "image_streaming_and_storing" / "cpp" / pointCloudFile;
+        pointCloudFp.make_preferred();
+
+        ply.write(pointCloudFp.string(), happly::DataFormat::Binary);
+      }
+      
+----

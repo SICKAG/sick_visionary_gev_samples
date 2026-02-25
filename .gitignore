@@ -1,0 +1,8 @@
+build/
+.vscode
+.fetchcontent
+.cti
+.venv
+*__pycache__
+*.bmp
+*.ply

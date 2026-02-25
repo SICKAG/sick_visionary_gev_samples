@@ -1,7 +1,49 @@
-= SICK Visionary Gev Samples Changelog
+= sick_visionary_gev_samples changelog
 
 This document provides a summary of all notable changes for the Visionary Gev samples collection.
 For a detailed view of what was changed, please refer to the repository's commit history.
+
+== 2.0.0
+
+=== Changed
+
+* Full overhaul of the README file taking into account the newly added C/C++ interface.
+* Removed GenTL Producer binaries from the repository, relying on their master copies in the visionary_gev_base repository.
+* Refactored GenTL Producer loading from all Python examples into a shared module (common.py)
+
+=== Fixed
+
+=== Added
+
+* C++ samples/tutorial working with GenIStreamC API (dependency on the visionary_gev_base) repository
+** tutorial 
+*** `TutorialGenIStreamC`
+** finding_and_connecting_devices
+*** `find_sensor`
+*** `configure_sensor`
+** image_streaming_and_storing
+*** `image_streaming`
+*** `multi_camera_streaming`
+*** `pointcloud_compute`
+** image_frontend_configuration
+*** `frontend_config`
+** diagnosing_devices
+*** `device_state`
+*** `device_state_extended`
+*** `system_log`
+** imu_data_access
+*** `imu_data`
+
+=== Known Issues
+
+=== Compatibility
+
+=== Supported devices
+
+* Visionary-T Mini AP
+* Visionary-S AP
+* Visionary-B Two
+
 
 == 1.0.0
 
@@ -11,8 +53,8 @@ For a detailed view of what was changed, please refer to the repository's commit
 
 === Added
 
-* Adds initial version of the Visionary Gev samples
-* Adds initial version of the Visionary Gev samples documentation
+* Adds initial version of the sick_visionary_gev_samples.
+* Adds initial version of the sick_visionary_gev_samples documentation.
 
 === Known Issues
 

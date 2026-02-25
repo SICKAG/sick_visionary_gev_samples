@@ -1,141 +1,116 @@
 :toc:
 
-= SICK Visionary Gev Samples
+= sick_visionary_gev_samples
 
 == Overview
-Version: `1.0.0` +
-This repository contains programming samples for Sick Visionary-T Mini AP (V3S145-1AAAAAA), Sick Visionary-S AP (V3S142-1AAxxxx) and Sick Visionary-B Two (V3S146-1AAAAAA). All samples require that the link:https://apppool.cloud.sick.com/publications/2db9b93b-134c-42e5-8925-2a0374d9715c[Visionary GigE Vision Basic] App is running on the devices.  
+Version: `2.0.0` +
+This repository contains programming samples for Sick Visionary-T Mini AP (V3S145-1AAAAAA), Sick Visionary-S AP (V3S142-1AAxxxx) and Sick Visionary-B Two (V3S146-1AAAAAA). All samples require that the link:https://apppool.cloud.sick.com/publications/2db9b93b-134c-42e5-8925-2a0374d9715c[Visionary Stream] App is running on the devices.  
 
 *Target audience* +
-All provided Python sample scripts (in the `python/` subdirectory) are intended to be used by developers and integrators! It is assumed that basic Python is known, and one can understand (and adopt) the existing code.
-
-To get started and to be able to connect to a device the xref:ip_config_sample[IP configuration] of the camera is essential. Once the camera is connected, the xref:tutorial_description[Tutorial sample] walks you through the process of using Harvesters for image acquisition. +
-All necessary information and prerequisites for working with the samples are outlined below. Further information can be found xref:further_doc[here]
-
+The samples provided in this repository are intended for developers and system integrators familiar with C++ or Python. Basic programming knowledge is assumed to adapt and extend the provided code.
 
 == License
 
 The source code is released under the MIT license.
 
-== Supported environments
-
-
-|===
-| **Platform**     | **Python Version ** | **Notes**   
-| Linux aarch64    |  3.7 - 3.11         | tested with Python 3.8; see <<Python installation and usage>> below
-| Linux x64        |  3.7 - 3.11         | tested with Python 3.8
-| Windows x64      |  3.7 - 3.11         | tested with Python 3.8       
-|===
-
 == Supported Hardware
 
 |===
-| **Device Name**                      | **Part No.**     | **Description**                                       | **Firmware Version**     | **GigE Vision Basic App version**
+| **Device Name**                      | **Part No.**     | **Description**                                       | **Firmware Version**     | **Visionary Stream App version**
 | Visionary-T Mini AP (pass:[V3S145-1AAAAAA]) | link:https://www.sick.com/1127086[1127086]        | 3D time-of-flight camera                              | 3.15.3                   |   2.0.2     
 | Visionary-B Two (pass:[V3S146-1AAAAAA])     | link:https://www.sick.com/1133032[1133032]          | 3D stereovision camera                                | 3.17.0                   |   2.0.2     
 | Visionary-S AP (pass:[V3S142-1AAxxxx])      | link:https://www.sick.com/1114320[1114320] link:https://www.sick.com/1114319[1114319] | 3D structured light stereovision camera               | 3.17.0                   |   2.0.2     
 |===
 
-== Getting started
-=== Network connection prerequisites
+== Network connection prerequisites
 * A Gigabit Ethernet (1000 Mbit/s) connection is the minimum requirement.
-* The network interface card (NIC) used to connect to the camera must support jumbo frames (typically MTU ≥ 9000 bytes).
+* The network interface card (NIC) used to connect to the camera must support jumbo frames (typically MTU = 9000 bytes).
 * All Ethernet components between the camera and the host machine—including switches and routers—must also support jumbo frames.
 * Optimal network performance cannot be guaranteed without the use of jumbo frames.
 
-=== Python installation and usage
-Most of the sample code (see more details below) is designed for use with Python 3.7 to Python 3.11 (code is tested with Python 3.8). Python can be obtained from it's link:https://www.python.org/[offical website].
 
-If a different version of Python is already installed, it is recommended to use Python's link:https://pypi.org/project/virtualenv/[virtualenv] package, to create a separated environment with the desired Python version. +
-In the following example, the system has a Python 3.10 installation (which is already in use) and it shows how to setup a virtualenv with Python 3.8.
+== Programming interfaces
 
-.Sample how to setup Python virtualenv with harvesters
-[%collapsible]
-====
+This repository provides a collection of examples for accessing the cameras from C/C++ and Python.
+
+=== C/C++: Using the SICK GenIStreamC library
+
+GenIStreamC is an SDK from SICK that provides an easy-to-use programming interface for accessing GigE Vision and GenICam–based Visionary cameras.
+The library binaries, development files and documentation are distributed through a dedicated repository link:https://github.com/SICKAG/sick_visionary_gev_base[sick_visionary_gev_base]. Refer to its link:https://github.com/SICKAG/sick_visionary_gev_base/blob/1.0.0/documentation/GettingStarted.adoc[GettingStarted document] for all required instructions - system requirements, package structure and build instructions and in particular pointers to the library reference and other documentation.
+
+[[quick-start]]
+=== Quick start
+For advanced users and those who want get productive immediately: Ensure you have a recent version of https://cmake.org/install/[cmake] footnote:[minimum required version >= 3.24] and a compiler available on your machine's system.
+To build the C++ samples, use the following command either in the top-level `visionary_gev_samples` directory or in the subdirectory of the respective sample using its specific CMakeLists.txt footnote:[Also, other ways are possible]:
+
+* `cmake -B build` optionally also specify other options like -G for custom generator
+
+Now you can build the files with the chosen build-system you've generated them for,
+for instance, open the solution in VisualStudio or run make/ninja.
+
+* `cmake --build build`
+
+To e.g. run the `find_sensor` sample, you can navigate to the `build/output` directory from their respective top-level directory:
+
+[source,bash]
 ----
-# check the currently used Python version
-C:\projects\gev_samples> python --version
-Python 3.10.2
+$ cd build/output/
 
-# Download and install Python 3.8 on you system, e.g. in C:\Tools\python38
-# make sure, to NOT add this Python version to your system PATHS variable 
-# when the installer asks for this. Doing so, the Python 3.8 installation
-# will not interfere with the current system configuration.
 
-# install the virtualenv package with pip
-C:\projects\gev_samples> pip install virtualenv
-...
+# On Windows depending on the <CONFIG> = {Debug, Release}
 
-# In a command shell, this creates and sets up "venv_sick_samples" in current
-# directory (change it to your needs, can be anywhere on your disk).
-# the --python option is used to provide the path to the Python installation
-# which should be used for the virtualenv
-C:\projects\gev_samples>virtualenv --python=C:\Tools\python38\python.exe venv_sick_samples
-created virtual environment CPython3.8.10.final.0-64 in 7433ms
-  creator CPython3Windows(dest=C:\projects\gev_samples\venv_sick_samples, clear=False, no_vcs_ignore=False, global=False)
-  seeder FromAppData(download=False, pip=bundle, setuptools=bundle, wheel=bundle, via=copy, app_data_dir=C:\Users\<USERNAME>\AppData\Local\pypa\virtualenv)
-    added seed packages: pip==22.3.1, setuptools==65.6.3, wheel==0.38.4
-  activators BashActivator,BatchActivator,FishActivator,NushellActivator,PowerShellActivator,PythonActivator
-
-# The created virtualenv, provides Scripts to active (and deactivate) the virtual environment
-# Now, as long as (venv_sick_samples) environment is active Python 3.8 is used
-C:\projects\gev_samples> venv_sick_samples\Scripts\activate
-(venv_sick_samples) C:\projects\gev_samples>python --version
-Python 3.8.10
-
-# To quit/exit the virtual environment, the deactivate command must be called
-(venv_py38) C:\projects\gev_samples>deactivate
-C:\projects\gev_samples>
-----
-====
-
-=== Required Python packages (including Harvesters)
-All required Python packages needed for working with the samples are defined in xref:requirements.txt[requirements.txt] This file can directly be used by Python:
-----
-(venv_sick_samples) C:\projects\gev_samples>pip install -r requirements.txt
-...
+$ cd build/output/<CONFIG>/
 ----
 
-.Installation of requirements.txt fails?
-[%collapsible]
-====
-If the installation fails with an error message similar to the following (message may vary depending on the package name):
+and execute the sample:
+
+[source,bash]
 ----
-ERROR: Could not find a version that satisfies the requirement genicam (from versions: none)
-ERROR: No matching distribution found for genicam
+$ ./find_sensor 
 ----
-In this case it is very likely, that the package is not provided for your current python version. This can happen when maintainers of packages needs more/longer time to adopt their package to new python releases. To verify if this is the case, please go to the pypi website https://pypi.org/ and search for the name of the failing package. Navigate to "Download files" to see a full list of the wheel packages provided for that package. You can derive from the file name , which python versions are supported. Example: if the file name contains `\*-cp311-*` that whl file is for python version 3.11. +
-With this information you should be able to select the correct/working python version to be installed and used in your virtualenv to get this samples running.
-====
 
-.Sample: how to check currently installed pip packages
-[%collapsible]
-====
+or you can execute it from their respective top-level directory:
+
+[source,bash]
 ----
-# The versions listed below are subject to change based on future updates to the requirements.txt file.
+$ ./build/output/find_sensor 
 
-(venv_sick_samples) C:\projects\gev_samples>pip list 
-harvesters             1.4.3
+# On Windows depending on the <CONFIG> = {Debug, Release}
+
+$ cd ./build/output/<CONFIG>/find_sensor
 ----
-====
+
+=== C++ samples
+
+The entry point to accessing Visionary cameras is the
+
+* link:/tutorial/cpp[Tutorial sample]
+
+that demonstrates how to use the GenIStreamC library by giving a detailed, fully commented walkthrough. Further, a collection of task-specific source code samples is available:
+
+* link:finding_and_connecting_devices/README.adoc[Finding and connecting devices]
+* link:image_streaming_and_storing/README.adoc[Streaming and storing]
+* link:image_frontend_configuration/README.adoc[Frontend configuration]
+* link:diagnosing_devices/README.adoc[Diagnosing devices]
+* link:imu_data_access/README.adoc[Access inertial measurement unit (IMU) data]
 
 
+=== Python: Using Harvesters
 
+Harvesters (https://github.com/genicam/harvesters) is a lightweight Python framework that provides an easy‑to‑use interface for accessing GigE Vision and GenICam–based Visionary cameras. When used together with the SICK GenICam GenTL Producer, it enables efficient and intuitive implementation of streaming and device‑control functionality in Python applications.
 
-== Sample description
+Refer to the xref:PythonSamples.adoc[Python samples overview] for specific installation instructions and description of the below mentioned samples.
+The starting point to work with GigE Vision and Harvesters is the
 
+* link:{gev_samples-url}/{main-branch-dir}/tutorial/python/tutorial_harvesters.py[Python tutorial sample] - a detailed, fully commented walkthrough of how to use Harvesters. We strongly recommend reviewing and understanding this script first. It is well‑documented and guides you step by step through the entire setup process. In addition, it performs several environment checks. Please pay close attention to any hints or warnings that appear during execution, as they may indicate configuration issues or missing dependencies.
 
-=== `tutorial_harvesters.py`: detailed commented walkthrough usage of Harvesters [[tutorial_description]]
-Before beginning work with GigE and Harvesters, it is strongly recommended to review and understand this script. The script is well-documented and outlines each step of the setup process.
+Furthermore, we provide a task‑specific sample:
 
-Additionally, it performs environment checks. Please pay close attention to any hints or warnings that may appear during execution, as they may indicate configuration issues or missing dependencies.
+* link:{gev_samples-url}/{main-branch-dir}/tutorial/python/ip_config.py[IP configuration] - provides functionality to query and manage the IP configuration of the camera — an essential prerequisite for reliable device operation. A camera with an IP address that does not match the subnet of the connected network interface will be inaccessible. The main features supported by the script are:
 
-=== `ip_config.py` : managing the IP configuration of the camera [[ip_config_sample]]
-This script provides functionality to query and manage the IP configuration of the camera—an essential prerequisite for reliable device operation. A camera with an IP address that does not match the subnet of the connected network interface will be inaccessible. The main features suppoerted by the script are:
-
-* Device discovery: Lists all currently visible devices, including identity details and current IP settings.
-* Temporary IP Assignment: Forces a temporary IP address (either user-defined or auto-selected) to bring the device into the same subnet as the host NIC. Note: This address is volatile and will not persist after a power cycle.
-* Persistent Configuration: Sets up permanent IP configuration for future boots, supporting static IP, DHCP, or LLA. Optionally, the IP configuration process can be forcefully restarted.
+** Device discovery: Lists all currently visible devices, including identity details and current IP settings.
+** Temporary IP Assignment: Forces a temporary IP address (either user-defined or auto-selected) to bring the device into the same subnet as the host NIC. Note: This address is volatile and will not persist after a power cycle.
+** Persistent Configuration: Sets up permanent IP configuration for future boots, supporting static IP, DHCP, or LLA. Optionally, the IP configuration process can be forcefully restarted.
 
 For detailed usage instructions, invoke the script with the --help parameter.
 
@@ -159,7 +134,7 @@ To assist with diagnostics, please capture network traffic during the issue usin
 Wireshark is widely supported, and extensive documentation and tutorials are available online.
 ==== 
 
-=== Enable debug log in harvesters
+=== Enable debug log in Harvesters (Python)
 .Activate Python debug logs
 [%collapsible]
 ====
@@ -186,7 +161,8 @@ SICK_GENTL_LOGGING_LEVEL=99
 * On Windows: Use https://learn.microsoft.com/en-us/sysinternals/downloads/debugview[DebugView] to view log output.  
 * On Linux: Logs will be printed to `stderr`.
 
-NOTE: Only enable this logging if explicitly requested by support.
+[WARNING]
+High-verbosity logging can significantly reduce acquisition performance. Enable it only when explicitly requested by support, and disable it after troubleshooting.
 
 ====
 
@@ -202,7 +178,7 @@ This often indicates IP misconfiguration. Avoid multi-homing (assigning multiple
 .Download encrypted device diagnostics
 [%collapsible]
 ====
-When contacting xref:support[SICK support], providing a diagnosis dump can be helpful. You can download the encrypted dump file via HTTPS — simply paste the provided URL into your browser
+When contacting xref:support[SICK support], providing a diagnosis dump can be helpful. You can download the encrypted dump file via HTTPS - simply paste the provided URL into your browser
 : +
 `\http://<CAMERA_IP>/api/crown/file?filePath=/diagnosisDump.zip`
 ====

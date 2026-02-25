@@ -1,0 +1,112 @@
+
+= Python & Harvesters Samples
+
+This repository provides Python examples for accessing SICK Visionary GigE Vision cameras using the link:https://github.com/genicam/harvesters\[Harvesters package].
+
+Before connecting to a device, ensure the camera’s xref:ip_config_sample[IP configuration] is correct.
+Once connected, the xref:tutorial_description[Tutorial sample] demonstrates image acquisition with Harvesters.
+The following sections outline prerequisites, installation steps, and sample descriptions. +
+
+== Supported environments
+
+|===
+| **Platform**     | **Python Version ** | **Notes**   
+| Linux aarch64    |  3.7 - 3.11         | tested with Python 3.8; see <<Python installation and usage>> below
+| Linux x64        |  3.7 - 3.11         | tested with Python 3.8
+| Windows x64      |  3.7 - 3.11         | tested with Python 3.8       
+|===
+
+== Getting started
+
+=== Python installation and usage
+Most of the sample code (see more details below) is designed for use with Python 3.7 to Python 3.11 (code is tested with Python 3.8). Install Python from its link:https://www.python.org/\[offical website].
+
+If another version is already installed, create an isolated environment using link:https://pypi.org/project/virtualenv/[virtualenv] to ensure compatibility with the samples.+
+In the following example, the system has a Python 3.10 installation (which is already in use) and it shows how to setup a virtualenv with Python 3.8.
+
+.Sample how to setup Python virtualenv with harvesters
+[%collapsible]
+====
+----
+# check the currently used Python version
+C:\projects\gev_samples> python --version
+Python 3.10.2
+
+# Download and install Python 3.8 on you system, e.g. in C:\Tools\python38
+# make sure, to NOT add this Python version to your system PATHS variable 
+# when the installer asks for this. Doing so, the Python 3.8 installation
+# will not interfere with the current system configuration.
+
+# install the virtualenv package with pip
+C:\projects\gev_samples> pip install virtualenv
+...
+
+# In a command shell, this creates and sets up "venv_sick_samples" in current
+# directory (change it to your needs, can be anywhere on your disk).
+# the --python option is used to provide the path to the Python installation
+# which should be used for the virtualenv
+C:\projects\gev_samples>virtualenv --python=C:\Tools\python38\python.exe venv_sick_samples
+created virtual environment CPython3.8.10.final.0-64 in 7433ms
+  creator CPython3Windows(dest=C:\projects\gev_samples\venv_sick_samples, clear=False, no_vcs_ignore=False, global=False)
+  seeder FromAppData(download=False, pip=bundle, setuptools=bundle, wheel=bundle, via=copy, app_data_dir=C:\Users\<USERNAME>\AppData\Local\pypa\virtualenv)
+    added seed packages: pip==22.3.1, setuptools==65.6.3, wheel==0.38.4
+  activators BashActivator,BatchActivator,FishActivator,NushellActivator,PowerShellActivator,PythonActivator
+
+# The created virtualenv, provides Scripts to active (and deactivate) the virtual environment
+# Now, as long as (venv_sick_samples) environment is active Python 3.8 is used
+C:\projects\gev_samples> venv_sick_samples\Scripts\activate
+(venv_sick_samples) C:\projects\gev_samples>python --version
+Python 3.8.10
+
+# To quit/exit the virtual environment, the deactivate command must be called
+(venv_py38) C:\projects\gev_samples>deactivate
+C:\projects\gev_samples>
+----
+====
+
+=== Required Python packages (including Harvesters)
+All required Python packages needed for working with the samples are defined in xref:requirements.txt[requirements.txt] This file can directly be used by Python:
+----
+(venv_sick_samples) C:\projects\gev_samples>pip install -r requirements.txt
+...
+----
+
+.Installation of requirements.txt fails?
+[%collapsible]
+====
+If the installation fails with an error message similar to the following (message may vary depending on the package name):
+----
+ERROR: Could not find a version that satisfies the requirement genicam (from versions: none)
+ERROR: No matching distribution found for genicam
+----
+In this case it is very likely, that the package is not provided for your current python version. This can happen when maintainers of packages needs more/longer time to adopt their package to new python releases. To verify if this is the case, please go to the pypi website https://pypi.org/ and search for the name of the failing package. Navigate to "Download files" to see a full list of the wheel packages provided for that package. You can derive from the file name , which python versions are supported. Example: if the file name contains `\*-cp311-*` that whl file is for python version 3.11. +
+With this information you should be able to select the correct/working python version to be installed and used in your virtualenv to get this samples running.
+====
+
+.Sample: how to check currently installed pip packages
+[%collapsible]
+====
+----
+# The versions listed below are subject to change based on future updates to the requirements.txt file.
+
+(venv_sick_samples) C:\projects\gev_samples>pip list 
+harvesters             1.4.3
+----
+====
+
+
+== Sample description
+
+=== `tutorial_harvesters.py`: A detailed, commented walkthrough of Harvesters usage [[tutorial_description]]
+Before beginning work with GigE and Harvesters, it is strongly recommended to review and understand this script. The script is well-documented and outlines each step of the setup process.
+
+Additionally, it performs environment checks. Please pay close attention to any hints or warnings that may appear during execution, as they may indicate configuration issues or missing dependencies.
+
+=== `ip_config.py` : Managing the camera IP configuration [[ip_config_sample]]
+This script provides functionality to query and manage the IP configuration of the camera—an essential prerequisite for reliable device operation. A camera with an IP address that does not match the subnet of the connected network interface will be inaccessible. The main features suppoerted by the script are:
+
+* Device discovery: Lists all currently visible devices, including identity details and current IP settings.
+* Temporary IP Assignment: Forces a temporary IP address (either user-defined or auto-selected) to bring the device into the same subnet as the host NIC. Note: This address is volatile and will not persist after a power cycle.
+* Persistent Configuration: Sets up permanent IP configuration for future boots, supporting static IP, DHCP, or LLA. Optionally, the IP configuration process can be forcefully restarted.
+
+For detailed usage instructions, invoke the script with the --help parameter.

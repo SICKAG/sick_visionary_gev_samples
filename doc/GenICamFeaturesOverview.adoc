@@ -73,7 +73,7 @@ DeviceOperationDomainStatus:: Reports the status of the selected device operatio
 DeviceTemperatureSelector:: Selects among supported device temperature readings to be observed. Currently supported options are
     System::: The main (system) temperature of the device
 
-DeviceTemperature:: Current value of the device temperature selected in DeviceTemperatureSelector, in degrees of Celsius (C).
+DeviceTemperature:: Current value of the device temperature selected in DeviceTemperatureSelector, in degrees of Celsius \(C).
 
 DeviceVoltageSelector:: Selects the location within the device, where the voltage will be measured. Currently supported options are
     InputOperating::: Input operating voltage of the device

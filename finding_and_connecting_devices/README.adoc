@@ -1,0 +1,448 @@
+= Finding and connecting to Visionary devices
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+:toc:
+
+This README provides an introduction to the GigE Vision C++ samples for discovering Visionary cameras on the network, reading device information, and configuring IP settings.
+
+== How to run the samples
+[NOTE]
+====
+Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+====
+
+Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
+
+**Find sensor**
+[source,bash]
+----
+$ ./build/output/find_sensor
+or
+$ ./build/output/find_sensor -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/find_sensor
+or
+$ ./build/output/<CONFIG>/find_sensor -t1000
+----
+
+**Configure sensor**
+[source,bash]
+----
+$ ./build/output/configure_sensor -sXXXXXXXX
+or
+$ ./build/output/configure_sensor -sXXXXXXXX -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/configure_sensor -sXXXXXXXX
+or
+$ ./build/output/<CONFIG>/configure_sensor -sXXXXXXXX -t1000
+----
+
+== Find Sensor
+This example demonstrates how to discover all available Visionary cameras in a given network. As soon as a Visionary camera is identified, its device information is displayed. For example, the IP address, serial number, MAC address and so on.
+
+=== Usage
+
+When you run the sample executable, it prints its usage information.
+
+[source,bash]
+----
+where option is one of
+  -h          show this help and exit
+  -t<timeout>     discovery timeout in milliseconds (default: 500)
+
+This sample scans for available SICK Visionary GigEVision sensors on the network
+and displays information about each discovered device.
+----
+
+=== Code example
+
+==== Initialize the error handle
+Most functions return a GsRet value, indicating whether the call was successful.
+The GsOK macro converts that value to a simple Boolean success/failure result.
+There is one exception to the rule above, functions which are simple getters which just
+return a simple value and are not expected to fail unless they are called with obviously
+broken prerequisites (such as using invalid handle). Such functions return the value
+directly instead of GsRet. All API functions provide an optional last parameter, GsErrorH*, allowing to obtain a handle to the extended error information (in particular the error message) if the function fails. This applies to all functions, including pure getters. The error handle will be created if and only if the function fails.
+
+[source,c++]
+----
+Error error;
+  
+----
+
+==== Initialize the library
+Initialize the library with streamlined error handling. We will use
+this approach for the rest of the tutorial. The idea is: use always the last parameter of each 
+function to obtain the extended error info. This allows uniform error checking, no matter if the function returns GsRet or if it is a pure getter function. The throwOnError() helper function will check if there was an error
+and if yes, it reads the associated error message and turns the error to a C++ exception.
+It also automatically releases the error handle, if one was created.
+The second optional parameter of throwOnError() allows to specify a string that will be prepended
+to the actual error message for extra context, if useful.
+
+[source,c++]
+----
+gsLibraryInit(error.ptr());
+  throwOnError(error, "Failed to initialize GenIStreamC library: ");
+  
+----
+
+==== Library cleanup function
+In presence of exceptions, it is also useful to perform any cleanup, such as gsLibraryClose,
+through a RAII mechanism, so that it is always executed, no matter how the current scope
+is exited (including exception or other early return). 
+The ScopeExit utility provides exactly that. After instantiating the scope exit handler below,
+we do not need to care about closing the library any more, it will be done always when
+leaving the current scope (in this case when leaving the try-block surrounding this code).
+
+[source,c++]
+----
+ScopeExit libCloser([=]() { gsLibraryClose(GsIgnoreErrorInfo); });
+  
+----
+
+==== Initialize and run device discovery
+Instantiate the camera discovery object that will give us access to the camera(s).
+
+[source,c++]
+----
+Discovery discovery;
+  gsLibraryGetDiscovery(discovery.ptr(), error.ptr());
+  throwOnError(error, "Failed to get discovery object: ");
+  
+----
+
+The default device discovery timeout (time to wait for cameras announcing their presence in the network) is sufficient for off-factory Visionary cameras. However, GigE Vision specification defines a configurable delay (typically randomized up to 1 second) the cameras should insert before announcing themselves to avoid flooding the network if many cameras are connected.
+
+[source,c++]
+----
+gsDiscoveryScanForCameras(discovery, timeout, error.ptr());
+  throwOnError(error, "Failed to scan for cameras: ");
+
+  // Get number of discovered cameras
+  auto numCameras = gsDiscoveryGetNumDiscoveredCameras(discovery, error.ptr());
+  throwOnError(error, "Failed to get number of cameras: ");
+
+  if (numCameras == 0)
+  {
+    std::cerr << "No GigE Vision devices discovered in this system\n";
+    return EXIT_FAILURE;
+  }
+
+  // Print number of found devices
+  std::cout << "Number of found devices: " << numCameras << "\n\n";
+  
+----
+
+==== Print device information
+
+Finally, we query the DiscoveredCamera handle for key properties such as display name, serial number, MAC address, IP address, subnet mask, and access status.
+After each API call, the function invokes throwOnError(hErr). On success, it prints the device information in human-readable format.
+
+[source,c++]
+----
+// Print device info for every found device
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+    printDeviceInfo(discoveredCamera, error);
+  }
+  
+----
+
+[source,c++]
+----
+// Get device information (strings are valid as long as discoveredCamera handle is valid)
+  auto pDisplayName = gsDiscoveredCameraGetDisplayName(discoveredCamera, error.ptr());
+  throwOnError(error);
+
+  auto pSerialNumber = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+  throwOnError(error);
+
+  auto macAddress = gsDiscoveredCameraGetMacAddress(discoveredCamera, error.ptr());
+  throwOnError(error);
+  auto macAddressStr = macToString(macAddress);
+
+  auto ipAddress = gsDiscoveredCameraGetIpAddress(discoveredCamera, error.ptr());
+  throwOnError(error);
+  String ipAddressStr;
+  gsIpAddressToString(ipAddress, ipAddressStr.ptr(), GsIgnoreErrorInfo);
+  throwOnError(error);
+
+  auto subnetMask = gsDiscoveredCameraGetSubnetMask(discoveredCamera, error.ptr());
+  throwOnError(error);
+  String subnetMaskStr;
+  gsIpAddressToString(subnetMask, subnetMaskStr.ptr(), GsIgnoreErrorInfo);
+
+  auto accessStatus = gsDiscoveredCameraGetAccessStatus(discoveredCamera, error.ptr());
+  throwOnError(error);
+
+  // Print device information
+  std::cout << "Device name:  " << pDisplayName << "\n"
+            << "SerialNumber: " << pSerialNumber << "\n"
+            << "MAC Address:  " << macAddressStr << "\n"
+            << "IP Address:   " << ipAddressStr.str() << "\n"
+            << "Subnet Mask:  " << subnetMaskStr.str() << "\n"
+            << "Access Status: " << getAccessStatusString(accessStatus) << "\n\n";
+  
+----
+
+== Configure Sensor
+
+This example demonstrates how to configure a new IP configuration to a Visionary GigE camera device.
+
+=== Usage
+
+When running the sample executable it will print usage information.
+
+[source, bash]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      serial number of target device (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 1100)
+
+This sample configures the IP address of a specific SICK Visionary device
+identified by its serial number. The device must be reachable on the network.
+
+Examples:
+  ./build/output/configure_sensor -s23070123
+----
+
+To actually configure the IP configuration of the device the parameter -s needs to be provided e.g. `./build/configure_sensor -sXXXXXXXX`.
+
+=== Code example
+
+Up until the identification of the target device the `configure sensor` sample matches the find `sensor sample`.
+Please refer to the above code explanation starting from <<Initialize the error handle>> to <<Initialize and run device discovery>>.
+
+==== Identify the target device
+After a successful run of the device discovery we search through the list of discovered cameras to find our specific device by its serial number. We:
+
+- Iterate over all discovered cameras.
+- Compare it to the requested serialNum.
+- If it matches, we store that camera as the targetCamera and stops searching.
+- If no camera matches, we print the information of each discovered camera & an error message. Finally we exit with a non-zero code.
+
+[source,c++]
+----
+DiscoveredCamera targetCamera;
+  bool foundTarget = false;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto pFoundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == pFoundSerialNum)
+    {
+      targetCamera = std::move(discoveredCamera);
+      foundTarget = true;
+      break;
+    }
+  }
+
+  if (!foundTarget)
+  {
+    std::cerr << "Device with serial number '" << serialNum << "' not found\n";
+    std::cout << "The following devices have been found\n";
+    for (size_t i = 0; i < numCameras; ++i)
+    {
+      DiscoveredCamera discoveredCamera;
+      gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+      throwOnError(error);
+      printDeviceInfo(discoveredCamera, error);
+    }
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== Print the device info
+
+If we have a match we print the device information to the console.
+Before trying to open the camera connection, we check the access status of the device. If the status is "NoAccess", most likely a wrong IP address (not matching the subnet of the network card it is connected to). You have two options to configure the device’s IP settings:
+
+1. We can get a suitable proposed IP configuration and "force" it into the device.
+2. We can configure the device ourselves and boot it into the expected IP subnet.
+
+[source,c++]
+----
+printDeviceInfo(targetCamera, error);
+  auto accessStatus = gsDiscoveredCameraGetAccessStatus(targetCamera, error.ptr());
+  throwOnError(error);
+  if (accessStatus != egsAccessStatusReadWrite)
+  {
+    std::cerr << "The discovered camera is not ready to open" << '\n';
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== IP proposal (Recommended for quick setup):
+We ask the discovery service to compute an IP address and subnet mask that fit the host’s network interface. We can then apply those values to the device to bring it into the same subnet, by accepting the proposal.
+
+[source,c++]
+----
+// Configure IP address
+  uint32_t ipToAssign = 0;
+  uint32_t maskToAssign = 0;
+
+  // Auto-propose suitable IP address
+  std::cout << "Proposing suitable IP address...\n";
+  gsDiscoveryProposeIp(discovery, targetCamera, timeoutMs, &ipToAssign, &maskToAssign, error.ptr());
+  throwOnError(error, "Failed to propose IP address: ");
+
+  String proposedIpStr;
+  gsIpAddressToString(ipToAssign, proposedIpStr.ptr(), error.ptr());
+  throwOnError(error);
+
+  String proposedMaskStr;
+  gsIpAddressToString(maskToAssign, proposedMaskStr.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== IP configuration (User input)
+
+If the automatically proposed settings are not accepted, the user can enter an IP configuration interactively.
+
+The user is asked to enter an IP address and subnet mask.
+If either value has been changed, the program prints the resulting “user-proposed” configuration as a short summary and reminds you that the device and your host network interface must share the same subnet; otherwise, discovery and access will fail until you revert or reconfigure. 
+
+[source,c++]
+----
+// If CLI provided IP/mask, skip asking
+  bool acceptIp = true;
+  bool acceptMask = true;
+
+  if (!ipFromCLI)
+  {
+    acceptIp = askYesNo("\nUse the proposed IP address? (Yes/No): ");
+    if (!acceptIp)
+    {
+      readAndConvertIp("Please enter a valid dotted IPv4 (e.g., 192.168.1.10):\n", ipToAssign, error);
+      gsIpAddressToString(ipToAssign, proposedIpStr.ptr(), error.ptr());
+      throwOnError(error);
+    }
+  }
+
+  if (!maskFromCLI)
+  {
+    acceptMask = askYesNo("\nUse the proposed Subnet Mask? (Yes/No): ");
+    if (!acceptMask)
+    {
+      readAndConvertIp("Please enter a valid dotted Subnet Mask (e.g., 255.255.255.0):\n", maskToAssign, error);
+      gsIpAddressToString(maskToAssign, proposedMaskStr.ptr(), error.ptr());
+      throwOnError(error);
+    }
+  }
+
+  const bool changedByUserOrCLI = (!acceptIp || !acceptMask || ipFromCLI || maskFromCLI);
+
+  if (changedByUserOrCLI)
+  {
+    std::cout << "\nSelected IP configuration:\n";
+    std::cout << "  IP:   " << proposedIpStr.str() << "\n";
+    std::cout << "  Mask: " << proposedMaskStr.str() << "\n";
+
+    std::cout << "\nMake sure the IP configuration matches the configuration of the network interface!\n"
+              << "(A configuration mismatch will result in camera discovery failure. In this case reset the "
+                 "configuration with a reboot.)\n";
+
+    bool acceptProposal = true;
+    if (!writeConfig)
+    {
+      acceptProposal = askYesNo("Force the latest IP configuration on the device? (Yes/No): ");
+    }
+
+    if (!acceptProposal)
+    {
+      std::cerr << "Skipped IP configuration. Exiting Program.\n";
+      return EXIT_FAILURE;
+    }
+  }
+  
+----
+
+==== Force (Apply) IP configuration
+Finally, you are asked for explicit confirmation to apply these latest values to the device. If you decline, no changes are made and the program exits gracefully.
+
+IMPORTANT: The forced IP address is temporary and resets after the next device power cycle.
+
+[source,c++]
+----
+// Force IP address to device
+  std::cout << "\nForcing IP configuration to device...\n";
+  gsDiscoveryForceIp(discovery, targetCamera, ipToAssign, maskToAssign, timeoutMs, error.ptr());
+  throwOnError(error, "Failed to force IP address: ");
+  
+----
+
+==== Verify the new IP configuration
+After applying or confirming the IP settings, the program performs a fresh discovery to verify that the device is now reachable under its new configuration. It triggers a re‑scan (gsDiscoveryScanForCameras) with the usual timeout and immediately checks for errors to ensure the discovery state is valid.
+[source,c++]
+----
+// Re-scan to verify new configuration
+  std::cout << "\nRe-scanning to verify new configuration...\n";
+  gsDiscoveryScanForCameras(discovery, timeoutMs, error.ptr());
+  throwOnError(error);
+
+  numCameras = gsDiscoveryGetNumDiscoveredCameras(discovery, error.ptr());
+  throwOnError(error);
+
+  // Connect to the camera to be able to configure it
+  Camera camera;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto pFoundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == pFoundSerialNum)
+    {
+      printDeviceInfo(discoveredCamera, error);
+      gsDiscoveryConnectToCamera(discovery, discoveredCamera, camera.ptr(), error.ptr());
+      throwOnError(error);
+      break;
+    }
+  }
+  
+----
+
+==== User option: Save the IP configuration permanently
+
+After asking for user consent, the program creates a Parameters object from the active camera connection, which exposes the device’s GenICam feature map,the standardized set of feature nodes that define the device’s user interface.
+Now we can get access to the device parameters - GenICam map of feature nodes defining user interface of the device. These parameters allow you to configure the device properties using the standardized GenICam interface. For details about individual available parameters, their data types, limits and mutual relationships, refer to the camera feature documentation delivered together with this package.
+Using this interface, the code sets GevPersistentIPAddress to the selected IP, GevPersistentSubnetMask to the matching mask, and GevPersistentDefaultGateway to 0 (typical for isolated segments without a routed gateway). When all writes succeed, the program reports that the configuration has been saved permanently.
+
+[source,c++]
+----
+if (savePermanent)
+  {
+    // access to the device parameters - GenICam map of feature nodes defining user interface of the device
+    Parameters parameters;
+    gsCameraCreateParameters(camera, parameters.ptr(), error.ptr());
+    throwOnError(error);
+    gsParametersSetInt(parameters, "GevPersistentIPAddress", ipToAssign, error.ptr());
+    throwOnError(error);
+    gsParametersSetInt(parameters, "GevPersistentSubnetMask", maskToAssign, error.ptr());
+    throwOnError(error);
+    gsParametersSetInt(parameters, "GevPersistentDefaultGateway", 0, error.ptr());
+    throwOnError(error);
+    std::cout << "Permanently saved the current IP configuration.\n";
+  }
+  
+----

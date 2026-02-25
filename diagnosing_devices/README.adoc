@@ -1,0 +1,548 @@
+= Diagnosing Visionary devices
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+:toc:
+
+This README provides an introduction to the GigE Vision C++ code examples in this folder on reading out several of the Visionary devices' diagnostic parameters and device information. Furthermore the cameras system log is read out and saved for advanced system information.
+
+== How to run the samples
+[NOTE]
+====
+Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+====
+
+Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
+
+**Device state**
+[source,bash]
+----
+$ ./build/output/device_state -sXXXXXXXX
+or
+$ ./build/output/device_state -sXXXXXXXX -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/device_state -s24000001
+or
+$ ./build/output/<CONFIG>/device_state -s24000001 -t1000
+----
+
+**Extended Device State**
+[source,bash]
+----
+$ ./build/output/device_state_extended -sXXXXXXXX
+or
+$ ./build/output/device_state_extended -sXXXXXXXX -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/device_state_extended -s24000001
+or
+$ ./build/output/<CONFIG>/device_state_extended -s24000001 -t1000
+----
+
+**System log**
+[source,bash]
+----
+$ ./build/output/system_log -sXXXXXXXX
+or
+$./build/output/system_log -sXXXXXXXX -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/system_log -s24000001
+or
+$ ./build/output/<CONFIG>/system_log -s24000001 -t1000
+----
+
+== Device state
+This example demonstrates how to read basic parameters from the Visionary cameras. As soon as the Visionary camera is identified, the parameters are accessed and read out. The parameters values can serve for diagnosing purposes.
+Beyond device information like the device's serial number this example reads out the system temperature and operating voltage.
+
+=== Usage
+When running the sample executable it will access a Visionary camera with the given serial number and print-out the read parameters.
+
+[source,bash]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      device serial number (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 5000)
+
+This sample reads the device state (temperature and voltage) from a specific
+SICK Visionary device identified by its serial number. The device must be
+reachable on the network.
+
+Examples:
+  ./build/output/device_state -s23070123
+  ./build/output/device_state -s23070123 -t1000
+----
+
+=== Code explanation
+
+==== Initialize the error handle
+Handle for extended error info that will be reused across all functions where we check for error (and wish to receive extended error info).
+
+Most functions return a GsRet value, indicating whether the call was successful.
+The GsOK macro converts that value to a simple Boolean success/failure result.
+There is one exception to the rule above, functions which are simple getters which just
+return a simple value and are not expected to fail unless they are called with obviously
+broken prerequisites (such as using invalid handle). Such functions return the value
+directly instead of GsRet. All API functions provide an optional last parameter, GsErrorH*, allowing to obtain a handle to the extended error information (in particular the error message) if the function fails. This applies to all functions, including pure getters. The error handle will be created if and only if the function fails.
+
+[source,c++]
+----
+Error error;
+  
+----
+
+==== Initialize the library
+Initialize the library with streamlined error handling. We will use
+this approach for the rest of the tutorial. The idea is: use always the last parameter of each 
+function to obtain the extended error info. This allows uniform error checking, no matter if the function returns GsRet or if it is a pure getter function. The throwOnError() helper function will check if there was an error
+and if yes, it reads the associated error message and turns the error to a C++ exception.
+It also automatically releases the error handle, if one was created.
+The second optional parameter of throwOnError() allows to specify a string that will be prepended
+to the actual error message for extra context, if useful.
+
+[source,c++]
+----
+gsLibraryInit(error.ptr());
+  throwOnError(error, "Failed to initialize GenIStreamC library: ");
+  
+----
+
+==== Library cleanup function
+In presence of exceptions, it is also useful to perform any cleanup, such as gsLibraryClose,
+through a RAII mechanism, so that it is always executed, no matter how the current scope
+is exited (including exception or other early return). 
+The ScopeExit utility provides exactly that. After instantiating the scope exit handler below,
+we do not need to care about closing the library any more, it will be done always when
+leaving the current scope (in this case when leaving the try-block surrounding this code).
+
+[source,c++]
+----
+ScopeExit libCloser([=]() { gsLibraryClose(GsIgnoreErrorInfo); });
+  
+----
+
+==== Initialize and run device discovery
+Instantiate the camera discovery object that will give us access to the camera(s).
+
+[source,c++]
+----
+Discovery discovery;
+  gsLibraryGetDiscovery(discovery.ptr(), error.ptr());
+  throwOnError(error, "Failed to get discovery object: ");
+  
+----
+
+The default device discovery timeout (time to wait for cameras announcing their presence in the network) is sufficient for off-factory Visionary cameras. However, GigE Vision specification defines a configurable delay (typically randomized up to 1 second) the cameras should insert before announcing themselves to avoid flooding the network if many cameras are connected.
+
+[source,c++]
+----
+gsDiscoveryScanForCameras(discovery, timeout, error.ptr());
+  throwOnError(error, "Failed to scan for cameras: ");
+
+  // Get number of discovered cameras
+  auto numCameras = gsDiscoveryGetNumDiscoveredCameras(discovery, error.ptr());
+  throwOnError(error, "Failed to get number of cameras: ");
+
+  if (numCameras == 0)
+  {
+    std::cerr << "No GigE Vision devices discovered in this system"
+              << "\n";
+    return 1;
+  }
+
+  // Print number of found devices
+  std::cout << "Number of found devices: " << numCameras << "\n\n";
+  
+----
+
+==== Identify the target device
+After a successful device discovery we search through the list of discovered cameras to find our specific device by its serial number. We:
+
+- Iterate over all discovered cameras.
+- Compare it to the requested serialNum.
+- If it matches, we store that camera as the targetCamera and stops searching.
+- If no camera matches, we print the info of each discovered camera & an error message. Finally we exit with a non-zero code.
+
+[source,c++]
+----
+DiscoveredCamera targetCamera;
+  bool foundTarget = false;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto foundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == foundSerialNum)
+    {
+      targetCamera = std::move(discoveredCamera);
+      foundTarget = true;
+      std::cout << "  -> Target device found!\n";
+      break;
+    }
+  }
+
+  if (!foundTarget)
+  {
+    std::cerr << "Device with serial number '" << serialNum << "' not found\n";
+    std::cerr << "The following devices have been found\n";
+    for (size_t i = 0; i < numCameras; ++i)
+    {
+      DiscoveredCamera discoveredCamera;
+      gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+      throwOnError(error);
+      printDeviceInfo(discoveredCamera, error);
+    }
+    return 1;
+  }
+  
+----
+
+==== Check if the target is accessible
+Before trying to open the camera connection, we check the access status of the device. If the status is "NoAccess", most likely a wrong IP address is set in the device's IP configuration (not matching the subnet of the network card it is connected to). We have two options to configure the device's IP configuration:
+
+1. We can get a suitable proposed IP configuration and "force" it into the device. This is shown in xref:../../finding_and_connecting_devices/finding_and_connecting_devices/README.adoc#ip-proposal-recommended-for-quick-setup[IP proposal].
+2. We can configure the device ourselves and boot it into the expected IP subnet. A guide can be found in xref:../../finding_and_connecting_devices/finding_and_connecting_devices/README.adoc#ip-configuration-user-input[IP configuration]
+
+[source,c++]
+----
+auto accessStatus = gsDiscoveredCameraGetAccessStatus(targetCamera, error.ptr());
+  throwOnError(error);
+  if (accessStatus != egsAccessStatusReadWrite)
+  {
+    std::cerr << "The discovered camera is not ready to open"
+              << "\n";
+    return 1;
+  }
+  
+----
+
+==== Connect to discovered device
+Once we found the target device and confirmed it is accessible, we can open a connection to it.
+
+[source,c++]
+----
+Camera camera;
+  gsDiscoveryConnectToCamera(discovery, targetCamera, camera.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Create parameters handle object
+To access the device parameters we need to create a parameters handle object for the connected device.
+This object will hold the parameters handle as soon as it is used to get a specific camera's parameter.
+The handle will be released automatically when the parameter was read from the device.
+Therefore the handle object can be used for multiple "gsParametersGet" operations as shown below.
+
+[source,c++]
+----
+Parameters parameters;
+  gsCameraCreateParameters(camera, parameters.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Read Out Parameters
+Device parameters can be pulled by their name using the getter function gsParametersGetXXX() provided by the ABI.
+Most parameters are linked to specific entries of a selector enumeration. Therefore, before reading a parameter, you should always define from which entry in the selector this value should be read.
+If the selector is not explicitly set to a specific entry, it is not possible to trace which subsystem the parameter originates from.
+
+In both of the following cases of reading out the device temperature and voltage, we first set the corresponding selector to the desired entry and then read out the parameter value.
+
+[source,c++]
+----
+double systemTemperature = 0.0;
+  gsParametersSetEnum(parameters, "DeviceTemperatureSelector", "System", error.ptr());
+  throwOnError(error);
+  gsParametersGetFloat(parameters, "DeviceTemperature", &systemTemperature, error.ptr());
+  throwOnError(error);
+  
+----
+
+[source,c++]
+----
+double deviceVoltage = 0.0;
+  gsParametersSetEnum(parameters, "DeviceVoltageSelector", "InputOperating", error.ptr());
+  throwOnError(error);
+  gsParametersGetFloat(parameters, "DeviceVoltage", &deviceVoltage, error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Read Out Parameters
+After reading out the parameters we can print their values to the console for diagnosing purposes.
+
+[source,c++]
+----
+std::cout << "\nDevice Temperature: " << systemTemperature << " degrees Celsius (°C)\n";
+  std::cout << "\nDevice voltage: " << deviceVoltage << " Volts (V)\n";
+  
+----
+
+== Extended Device State
+This example extends the previous device state example by reading out a wider range of parameters from the Visionary cameras.
+
+=== Usage
+When running the sample executable it will access a Visionary camera with the given serial number and print-out the read parameters.
+
+[source,bash]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      device serial number (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 5000)
+
+This sample reads the device state (temperature and voltage) from a specific
+SICK Visionary device identified by its serial number. The device must be
+reachable on the network.
+
+Examples:
+  ./build/output/device_state_extended -s23070123
+  ./build/output/device_state_extended -s23070123 -t1000
+----
+
+=== Code explanation
+Up until the creation of the parameter's object handle the `"Extended Device State"` sample matches the find `"Device state"` sample.
+Please refer to the above code explanation starting from "<<Initialize the error handle>>" to "<<Create parameters handle object>>".
+
+==== Direct-access parameter read out
+Some parameters are not linked to specific parts or entries of a selector. Therefore, they can be pulled directly by their name using the getter function gsParametersGetXXX() provided by the ABI.
+The XXX extension depends on the parameter type (e.g., string, float, enum, etc.).
+In this example we read out the device vendor name as such a directly accessible parameter.
+According to the SFNC of the GenICam standard, this parameter is of type string.
+
+[source,c++]
+----
+String deviceVendorName;
+  gsParametersGetString(parameters, "DeviceVendorName", deviceVendorName.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+.The code example also shows the retrieval of the following parameters:
+- Device Model Name
+- Device Serial Number
+- Device Version
+- Device User ID
+
+==== Selector-access parameter read out
+Parameters that are from type enum often hold an general value that symbolizes the overall state of a the device domains that are pictured by the selector's entries.
+In this example we read out the DeviceScanType parameter which is of enum type with read-only access.
+
+We pull the enum's value by its name using the getter function gsParametersGetEnum() provided by the ABI. This function call returns the value to which the enum is currently set.
+
+[source,c++]
+----
+String deviceScanType;
+  gsParametersGetEnum(parameters, "DeviceScanType", deviceScanType.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+In the next step we check the device operation status by reading out the DeviceOperationStatus parameter.
+At first we read out the general state which is held by the DeviceOperationStatus selector by using the getter function gsParametersGetEnum() as in the previous code snippet which reads out the `DeviceScanType` parameter.
+
+Afterwards we we call the gsParametersGetEnumEntries() getter function to retrieve all possible enum entries of the DeviceScanType parameter.
+
+[source,c++]
+----
+StringList deviceOperationDomainStatusEntries;
+  gsParametersGetEnumEntries(parameters, "DeviceScanType", GsTrue, deviceOperationDomainStatusEntries.ptr(),
+                             error.ptr());
+  throwOnError(error);
+
+  std::cout << "Supported DeviceScanType entries:\n";
+  for (const auto& entry : deviceOperationDomainStatusEntries.strs())
+  {
+    std::cout << " - " << entry << "\n";
+  }
+  
+----
+
+.The result of gsParametersGetEnumEntries() shows that the following entries are defined for the DeviceOperationStatus selector:
+- Temperature
+- ElectricalConnectivity
+- Illumination
+- ImageAcquisition
+
+Before reading a parameter which is bound to the selector entry, you should always define from which entry this value should be read from.
+The parameter is linked to the currently set entry of the selector enum.
+Accessing the parameter without defining the entry would use a pre-selected entry, thus leading to untraceable results.
+This topic is also explained in the "<<Read Out Parameters>>" chapter of the previous "<<Device state>>" example.
+
+The first parameter read out in this section is called DeviceOperationDomainStatus and is linked to the DeviceOperationDomainSelector.
+This example demonstrates that the selector has to be set to the domain/entry from which the status should be read.
+In this case the `Temperature` entry is selected, what allows to read out the temperature domain status, which is an enum too.
+
+The other entries of DeviceOperationDomainSelector are selected and read out in the same pattern.
+
+[source,c++]
+----
+String deviceOperationTemperatureDomainStatus;
+  gsParametersSetEnum(parameters, "DeviceOperationDomainSelector", "Temperature", error.ptr());
+  throwOnError(error);
+  gsParametersGetEnum(parameters, "DeviceOperationDomainStatus", deviceOperationTemperatureDomainStatus.ptr(),
+                      error.ptr());
+  throwOnError(error);
+  
+----
+
+In addition the system temperature and operation voltage are read out again as in the previous example <<Device state>>.
+
+== System log
+This example demonstrates how to read and save internal device files from Visionary cameras, using the system log as an example.
+The system log contains detailed information about device operation, warnings, errors, and other significant events. 
+Such data is essential for troubleshooting and diagnosing issues with the camera.
+
+=== Other device files
+Using the same mechanism, the following internal files can be retrieved and stored:
+
+SystemMessageLog: Contains system-level log messages (warnings, errors, events). This is a read‑only text file presented in a human‑readable tabular format.
+DiagnosisDump: Provides a binary dump with diagnostic information about the device. This file may be requested by SICK service to analyze specific issues. Read‑only binary file.
+LicenseInformation: Contains information and full texts of licenses for third‑party software components used in the device firmware. Read‑only text file.
+
+=== Usage
+When running the sample executable it will access a Visionary camera with the given serial number and access the camera's filesystem.
+
+[source,bash]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      device serial number (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 5000)
+
+This sample retrieves the system log file from a specific SICK
+Visionary device identified by its serial number. The device must be
+reachable on the network.
+
+Examples:
+  ./build/output/system_log -s23070123
+  ./build/output/system_log -s23070123 -t1000
+----
+
+=== Code explanation
+Up until the establishment of the connection to the device the `"System log"` sample matches the previous find `"Device state"`.
+Please refer to the above code explanation starting from <<Initialize the error handle>> to <<Connect to discovered device>>.
+
+// Hier könnte man auch eine direkte Referenz einbauen
+
+==== Check if the system log file is implemented
+The individual device files are identified using their names.
+The device file names are in usual 'GenICam' format, CamelCase, just pure name without any file extension.
+The name has to match one of the files supported by given camera, otherwise an exception would be thrown when trying to access it.
+Therefore we first check if the desired file targeted by the given string is implemented by the camera.
+
+The Visionary cameras support downloading various types of files from the device by means of the GenICam File Access mechanism. Software products supporting given standard "protocol" provide straightforward way to exchange the files between the device and application, hiding the file access details from you.
+      
+We'll demonstrate this feature using 'SystemMessageLog' file which provides formatted human readable overview of system log messages (errors/warnings) collected during device runtime. For more detailed description of purpose of this particular file as well as of other files supported by the Visionary cameras, please refer to the camera feature documentation.
+
+[source,c++]
+----
+const char* pDeviceFileName = "SystemMessageLog";
+
+    if (GsIsFalse(gsCameraIsImplementedFile(camera, pDeviceFileName, GsIgnoreErrorInfo)))
+    {
+      /* (You can verify existence of the file before use, if needed) */
+      std::cerr << "The file '" << pDeviceFileName << "' is not implemented by the device" << std::endl;
+      return 1;
+    }
+
+    CameraFile deviceFile;
+    gsCameraGetFile(camera, pDeviceFileName, deviceFile.ptr(), error.ptr());
+    throwOnError(error, "Failed to get device file");
+    if (GsIsFalse(gsCameraFileIsReadable(deviceFile, GsIgnoreErrorInfo)))
+    {
+      /* (Future firmware versions might introduce write-only files for specific
+       * purposes, however, currently supported files are all read-only and thus
+       * this check is not required) */
+      std::cerr << "The file '" << pDeviceFileName << "' is not readable" << std::endl;
+    }
+    
+----
+
+==== Prepare filesystem save location
+GenIStream allows to store the downloaded file to a desired path in the host's filesystem or just download the file contents to a memory buffer.
+Following lines demonstrate the option storing the file in host'sfilesystem, using just a plain file name to store it in current working directory.
+You can use any file path of your choice.
+Note that not all files might have text contents and thus the 'txt' extension might not be appropriate in all cases, see description of the individual files provided by Visionary cameras in their feature documentation.
+
+To store the retrieved system log file, we prepare a dedicated directory structure.
+We create a folder named `SystemLogs` in the current working directory if it does not already exist.
+The design of the directory structure does not belong to the scope of the GenIStreamC ABI, so you can implement it according to your own preferences.
+
+[source,c++]
+----
+auto currentPath = std::filesystem::current_path();
+    auto systemLogsPath = currentPath / "diagnosing_devices" / "cpp" / "SystemLogs";
+
+    if (!std::filesystem::exists(systemLogsPath))
+    {
+      std::cout << "Directory does not exist: " << systemLogsPath << "\n";
+
+      try
+      {
+        std::filesystem::create_directories(systemLogsPath);
+        std::cout << "Created directory: " << systemLogsPath << "\n";
+      }
+      catch (const std::filesystem::filesystem_error& e)
+      {
+        std::cerr << "Failed to create directory: " << systemLogsPath << " - " << e.what() << "\n";
+        return 1;
+      }
+    }
+    
+----
+
+==== Prepare unique filename
+After preparing the filesystem location, we create a unique filename for the retrieved system log file.
+The filename is constructed using the device's model name, serial number, and a timestamp indicating when the file was retrieved.
+This ensures that each log file is uniquely identifiable and prevents overwriting existing files.
+Again, the specific format of the filename is up to your own preferences and does not influence the functionality of the GenIStreamC methods.
+
+For a more detailed explanation of the shown aquisiton of the device specific information please refer to the chapter xref:../../finding_and_connecting_devices/finding_and_connecting_devices/README.adoc#print-device-information[Print device information] from the  <<Find Sensor>> sample.
+
+[source,c++]
+----
+auto model = gsDiscoveredCameraGetModel(targetCamera, error.ptr());
+    throwOnError(error);
+
+    auto serialNumber = gsDiscoveredCameraGetSerialNumber(targetCamera, error.ptr());
+    throwOnError(error);
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t timeTNow = std::chrono::system_clock::to_time_t(now);
+    std::tm* pTimeInfo = std::localtime(&timeTNow);
+
+    std::ostringstream timestampStream;
+    timestampStream << std::put_time(pTimeInfo, "%Y%m%d_%H%M%S");
+    std::string timestamp = timestampStream.str();
+    
+----
+
+==== Retrieve the system log file
+With the target file identified and the unique filename prepared, we proceed to retrieve the system log file from the camera.
+The file is downloaded from the camera's filesystem and saved to the previously prepared location with the unique filename.
+
+If you needed to download the file directly to memory (not to the filesystem), replace the gsCameraFileRetrieveFromCamera() function call with gsCameraFileRetrieveContentFromCamera().
+For further information about the use of gsCameraFileRetrieveContentFromCamera() please refer to the xref:../../README.adoc[GenIStreamC ABI documentation].
+    
+
+[source,c++]
+----
+std::string logFileName = std::string(model) + "_" + serialNumber + "_" + timestamp + ".txt";
+    auto targetFilePath = systemLogsPath / logFileName;
+    auto targetFilePathString = targetFilePath.string();
+    gsCameraFileRetrieveFromCamera(deviceFile, targetFilePathString.c_str(), error.ptr());
+    throwOnError(error);
+
+    std::cout << "Downloaded device file '" << pDeviceFileName << "' to " << targetFilePath << std::endl;
+    
+----
+

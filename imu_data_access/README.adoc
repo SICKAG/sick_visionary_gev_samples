@@ -1,0 +1,358 @@
+= IMU Data access
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+:toc:
+
+This README provides an introduction to the GigE Vision C++ sample in this folder tht demonstrates how to acquire and parse IMU (inertial measurement unit) data from SICK Visionary GigE Vision devices using the GenIStreamC ABI.
+
+== How to run the samples
+[NOTE]
+====
+Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+====
+
+Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
+
+**Access IMU data**
+[source,bash]
+----
+$ ./build/output/imu_data -s24000001
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/imu_data -s24000001
+----
+
+=== Usage
+
+When running the sample executable without arguments it will print usage information:
+[source,text]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      serial number of target device (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 1100)
+
+This sample shows how to read IMU data from a SICK Visionary GigE device
+identified by its serial number. The device must be reachable on the network.
+
+Examples:
+  ./build/output/imu_data -s23070123
+  ./build/output/imu_data -s23070123 -t1000
+----
+
+=== Code example
+==== Initialize the error handle
+Most functions return a GsRet value, indicating whether the call was successful.
+The GsOK macro converts that value to a simple Boolean success/failure result.
+There is one exception to the rule above, functions which are simple getters which just
+return a simple value and are not expected to fail unless they are called with obviously
+broken prerequisites (such as using invalid handle). Such functions return the value
+directly instead of GsRet. All API functions provide an optional last parameter, GsErrorH*, allowing to obtain a handle to the extended error information (in particular the error message) if the function fails. This applies to all functions, including pure getters. The error handle will be created if and only if the function fails.
+
+[source,c++]
+----
+Error error;
+  
+----
+
+==== Initialize the library
+Initialize the library with streamlined error handling. We will use
+this approach for the rest of the tutorial. The idea is: use always the last parameter of each
+function to obtain the extended error info. This allows uniform error checking, no matter if the function returns GsRet or if it is a pure getter function. The throwOnError() helper function will check if there was an error
+and if yes, it reads the associated error message and turns the error to a C++ exception.
+It also automatically releases the error handle, if one was created.
+The second optional parameter of throwOnError() allows to specify a string that will be prepended
+to the actual error message for extra context, if useful.
+[source,c++]
+----
+gsLibraryInit(error.ptr());
+  throwOnError(error, "Failed to initialize GenIStreamC library: ");
+  
+----
+
+==== Library cleanup function
+In presence of exceptions, it is also useful to perform any cleanup, such as gsLibraryClose,
+through a RAII mechanism, so that it is always executed, no matter how the current scope
+is exited (including exception or other early return).
+The ScopeExit utility provides exactly that. After instantiating the scope exit handler below,
+we do not need to care about closing the library any more, it will be done always when
+leaving the current scope (in this case when leaving the try-block surrounding this code).
+
+[source,c++]
+----
+ScopeExit libCloser([=]() { gsLibraryClose(GsIgnoreErrorInfo); });
+  
+----
+
+==== Initialize and run device discovery
+The default device discovery timeout (time to wait for cameras announcing their presence in the network) is sufficient for off-factory Visionary cameras. However, GigE Vision specification defines a configurable delay (typically randomized up to 1 second) the cameras should insert before announcing themselves to avoid flooding the network if many cameras are connected.
+
+[source,c++]
+----
+Discovery discovery;
+  gsLibraryGetDiscovery(discovery.ptr(), error.ptr());
+  throwOnError(error, "Failed to get discovery object: ");
+  
+----
+
+==== Identify target device
+After a successful run of the device discovery we search through the list of discovered cameras to find the specific device by its serial number. We:
+
+- Iterate over all discovered cameras.
+- Compare it to the requested serialNum.
+- If it matches, we store that camera as the targetCamera and stop searching.
+- If no camera matches, we print the info of each discovered camera & an error message. Finally we exit with a non-zero code.
+
+[source,c++]
+----
+DiscoveredCamera targetCamera;
+  bool foundTarget = false;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto pFoundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == pFoundSerialNum)
+    {
+      targetCamera = std::move(discoveredCamera);
+      foundTarget = true;
+      std::cout << "Found target device\n\n";
+      break;
+    }
+  }
+
+  if (!foundTarget)
+  {
+    std::cerr << "Device with serial number '" << serialNum << "' not found\n";
+    std::cerr << "The following devices have been found\n";
+    for (size_t i = 0; i < numCameras; ++i)
+    {
+      DiscoveredCamera discoveredCamera;
+      gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+      throwOnError(error);
+      printDeviceInfo(discoveredCamera, error);
+    }
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== Check device access status
+Before trying to open, we can check the access status of the device.
+If the status is "NoAccess", it is most likely a wrong IP address (not matching the subnet of the network card it is connected to). 
+
+We can demonstrate how a suitable IP address can be "forced" into the device, however, configuring the device to boot into expected IP subnet is recommended instead. For more information see xref:../finding_and_connecting_devices/cpp/configure_sensor.cpp[Configure sensor sample].
+
+If the access status is still not "ReadWrite" (meaning it is ready to open) or if we failed for any reason to
+rediscover the camera, stop the example. This can happen because of multiple reasons, including that the camera
+is already open by another application and is beyond the scope of this example.
+
+[source,c++]
+----
+auto accessStatus = gsDiscoveredCameraGetAccessStatus(targetCamera, error.ptr());
+  throwOnError(error);
+  if (accessStatus != egsAccessStatusReadWrite)
+  {
+    std::cerr << "The discovered camera is not ready to open"
+              << "\n";
+    return EXIT_FAILURE;
+  }
+  
+----
+
+==== Connect to camera
+Connect to the camera to be able to configure it and acquire images. After a successful connection our example will "own" the camera and no other application will be able to connect. For the reasons described also above, the
+call can still fail if another application managed to connect in the meanwhile. Same comments apply about the use of shared_ptr to maintain ownership of the camera object (and keeping the connection open through it).
+Side note: after this point the discoveredCamera handle is no more used and could also be released if desired.
+
+[source,c++]
+----
+Camera camera;
+  gsDiscoveryConnectToCamera(discovery, targetCamera, camera.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+Now we can get access to the device parameters - GenICam map of feature nodes defining user interface of the device. We can use these features to configure the device properties. For details about individual available parameters, their data types, limits and mutual relationships, refer to the camera feature documentation delivered together with this package.
+[source,c++]
+----
+Parameters parameters;
+  gsCameraCreateParameters(camera, parameters.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Enable components
+Enable the basic IMU data component.
+all Visionary models provide IMU data, so the example first checks whether the ImuBasic component is implemented. The access mode related checks are implemented as pure getters in GenIStreamC, returning directly the GsBool value (GsFalse fallback in case of any problem), thus we can skip the error checking safely.
+
+IMPORTANT: At least one component (intensity/depth/IMU) must be enabled for streaming. While the camera itself allows streaming chunk data only, the current version of GenIStreamC is not (yet) ready for such mode.  
+
+[source,c++]
+----
+if (GsIsTrue(gsParametersIsImplementedEnumEntry(parameters, "ComponentSelector", "ImuBasic", GsIgnoreErrorInfo)))
+  
+----
+[source,c++]
+----
+gsParametersSetEnum(parameters, "ComponentSelector", "ImuBasic", error.ptr());
+    throwOnError(error);
+    gsParametersSetBool(parameters, "ComponentEnable", GsTrue, error.ptr());
+    throwOnError(error);
+    
+----
+
+Enable the ImuBasic "image" component, which will deliver the accumulated IMU measurement data
+as a pseudo-image (in Mono8 format) together with the actually acquired range and/or intensity
+image data. This form is used to guarantee the IMU data can be reliably consumed by wide range
+of GigE Vision receivers without any special capabilities.
+The individual measurements (to be parsed below) are delivered as lines of this pseudo‑image. Up to 100 measurements (“lines”) are accumulated between two consecutive range/intensity images.
+These up to 100 lines are stored in a ring buffer, meaning they always represent the most recent N samples that were captured immediately before the corresponding range/intensity frame was received. Note that here we just enable the ImuBasic component and don't explicitly care about state of the other ones, which are not significant in this example.
+
+==== Create frame grabber and start acquisition
+Finally, before starting acquisition, it is usually useful to increase the default number of buffers GenIStream will use for acquisition - this can help overcome possible temporary hiccups in the buffer processing on GenIStream/application side.
+
+[source,c++]
+----
+const size_t numBuffers = 10;
+  FrameGrabber grabber;
+  gsCameraCreateFrameGrabber(camera, numBuffers, grabber.ptr(), error.ptr());
+  throwOnError(error);
+  gsFrameGrabberStart(grabber, error.ptr());
+  throwOnError(error);
+  std::cout << "Going to acquire a frame including the IMU data component" << '\n';
+  
+----
+Now we can start the acquisition. Note that during active acquisition many of the camera parameters will be locked (not writable).
+
+The gsFrameGrabberGrabNext() function lets the "grabber" to acquire a new buffer/image
+and provide higher level information about the result. It also controls the buffer ownership - as soon as the frame object (GsFrameH handle or its C++ wrapper) is released, the buffer is automatically returned to the acquisition engine for refill - it is important to release the frame objects as soon as you're done with given buffer. 
+When acquiring in a loop and using the helper RAII handle wrappers (such as in this example), 
+the object is naturally released when going out of scope at the end of each loop.
+
+First we check if the operation was successful. Besides a successfully acquired frame, the result could also contain information about a failure (timeout, aborted) or information about lost frames. See detailed documentation of gsGrabResultHasFrame() and its sibling functions for further details.
+
+If we detected lost frames, we just print the information and continue - next valid frame should be delivered through the next gsFrameGrabberGrabNext() call.
+Other cases mean either the acquisition was aborted (e.g. if it was stopped from another thread) or other kind of grab failure - in this simple example let's just exit in such case.
+
+[source,c++]
+----
+GrabResult grabResult;
+  gsFrameGrabberGrabNext(grabber, grabResult.ptr(), error.ptr());
+  throwOnError(error);
+  if (GsIsTrue(gsGrabResultHasLostFrames(grabResult, GsIgnoreErrorInfo)))
+  {
+    // release and reuse the grab-result handle wrapper
+    grabResult.release();
+    gsFrameGrabberGrabNext(grabber, grabResult.ptr(), error.ptr());
+    throwOnError(error);
+  }
+  if (GsIsFalse(gsGrabResultHasFrame(grabResult, GsIgnoreErrorInfo)))
+  {
+    std::cerr << "Failed to acquire the frame to read the IMU data" << '\n';
+    return 1;
+  }
+  Frame frame;
+  gsGrabResultGetFrame(grabResult, GsFalse, frame.ptr(), error.ptr());
+  throwOnError(error);
+  std::cout << "Successfully acquired the frame to demonstrate IMU data processing" << '\n';
+  if (GsIsTrue(gsFrameIsIncomplete(frame, GsIgnoreErrorInfo)))
+  {
+    std::cout << "\tBeware though, the frame was acquired incomplete (one or more packets lost)" << '\n';
+  }
+  
+----
+
+==== Get components from each frame
+The IMU-basic "pseudo-image" is not a standard GenICam component type (and not accessible in GenIStreamC via dedicated API) - the component has to be accessed using the "component ID" assigned to it in the GigE Vision stream protocol - that ID is 0xFF02, represented by egsComponentIdImuBasic. Of course, if delivery of the ImuBasic component was not enabled (see ComponentSelector/ComponentEnable above), it would not be found in the stream buffers (the respective call would throw).
+
+Note that the calls will fail if given components are not present in the acquired frame (e.g. if you did not enable them in the configuration phase).
+
+To identify the pixel formats based on the GenICam PFNC standard, we use the identifiers from the official PFNC header file, which also contains additional utilities like GetPixelFormatName() providing additional information for every standard format.
+
+The IMU-basic data are delivered in Mono8 (8-bit monochrome) format for Visionary cameras.
+The pseudo-image 8-bit "pixels" represent bytes of the IMU data blob delivered in this block.
+Lines of the pseudo-image represent individual IMU readings in this block, one line per reading.
+There might be different amount of IMU readings (pseudo image lines) in each block, depending
+how many of them were generated between the previous and current range data acquisition.
+Note that in a corner case when no IMU readings were available, there will be a single line
+in the component with all zeroes - however, this is just a hypothetical corner case, because
+IMU readings are generated with higher frequency than the range sensor acquisitions.
+     
+[source,c++]
+----
+Component cmpImu;
+  gsFrameGetComponent(frame, egsComponentIdImuBasic, cmpImu.ptr(), error.ptr());
+  throwOnError(error);
+  auto imuW = gsComponentGetWidth(cmpImu, GsIgnoreErrorInfo);
+  auto imuH = gsComponentGetDeliveredHeight(cmpImu, GsIgnoreErrorInfo);
+  auto imuFmt = gsComponentGetPixelFormat(cmpImu, GsIgnoreErrorInfo);
+  std::cout << "The frame contains IMU data component, size: " << imuW << "x" << imuH << ", pixel format "
+            << GetPixelFormatName(PfncFormat(imuFmt)) << '\n';
+  // The IMU-basic data are delivered in Mono8 (8-bit monochrome) format for Visionary
+  if (imuFmt != PFNC_Mono8)
+  {
+    std::cerr << "\tUnexpected pixel format for IMU data, Mono8 data expected" << '\n';
+    return 1;
+  }
+  auto const* imuDataBytes = gsComponentGetData(cmpImu, GsIgnoreErrorInfo);
+
+----
+
+==== Parse and print IMU data
+Note that individual image components acquired in one "frame" do not have same dimensions and that especially applies to the Visionary ImuBasic component. It is therefore important to query the image properties such as dimensions separately for every acquired component.
+
+Individual IMU readings contain the following values:
+
+* 3 x acceleration (x/y/z axis) as 64-bit float [m/s^2^]
+* 3 x angular velocity (x/y/z axis) as 64-bit float [rad/s]
+* 3 x magnetic field (x/y/z axis) as 64-bit float [T]
+* 4 x orientation (unit/norm-1 quaternion) as 64-bit float
+* 1 x timestamp as 64-bit integer [ns] 
+
+Each pseudo‑image line contains one `ImuData` structure packed in binary form.
+
+Everything is ready to parse all delivered IMU data, let's print part of it (timestamp, accelerations and angular velocities in a tabular form).
+
+[source,c++]
+----
+#pragma pack(push, 1)
+  struct ImuData
+  {
+    double acceleration[3];
+    double angularVelocity[3];
+    double magneticField[3];
+    double orientation[4];
+    uint64_t timeStamp;
+  };
+#pragma pack(pop)
+  auto const* imuDataValues = reinterpret_cast<const ImuData*>(imuDataBytes);
+
+  // The width of the pseudo-image (single line length) will always match size of this IMU reading struct
+  assert(imuW == sizeof(ImuData));
+  // Number of IMU readings correspond to the pseudo-image height
+  auto numImuReadings = imuH;
+  assert(numImuReadings * sizeof(ImuData) == gsComponentGetDeliveredDataSize(cmpImu, GsIgnoreErrorInfo));
+  std::cout << "Number of IMU data readings available in the buffer: " << numImuReadings << '\n';
+
+  std::cout << "ID  |Accel-X  |Accel-Y  |Accel-Z  |AngVelo-X|AngVelo-Y|AngVelo-Z|Timestamp" << '\n';
+  for (size_t i = 0; i < numImuReadings; ++i)
+  {
+    auto& imuValue = imuDataValues[i];
+
+    std::cout << std::setfill(' ') //<< std::fixed
+              << std::setw(4) << i << "|" << std::setw(9) << std::setprecision(3) << imuValue.acceleration[0] << "|"
+              << std::setw(9) << std::setprecision(3) << imuValue.acceleration[1] << "|" << std::setw(9)
+              << std::setprecision(3) << imuValue.acceleration[2] << "|" << std::setw(9) << std::setprecision(3)
+              << imuValue.angularVelocity[0] << "|" << std::setw(9) << std::setprecision(3)
+              << imuValue.angularVelocity[1] << "|" << std::setw(9) << std::setprecision(3)
+              << imuValue.angularVelocity[2] << "|" << imuValue.timeStamp << '\n';
+  }
+  
+----

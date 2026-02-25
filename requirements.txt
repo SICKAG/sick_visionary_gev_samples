@@ -4,3 +4,4 @@ numpy
 packaging
 plyfile
 pillow
+gitpython

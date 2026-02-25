@@ -1,0 +1,24 @@
+BasedOnStyle: google
+AccessModifierOffset: -2
+BreakBeforeBinaryOperators: NonAssignment
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterObjCDeclaration: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: true
+  BeforeElse: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+BreakBeforeBraces: Custom
+BreakConstructorInitializers: BeforeComma
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
+ConstructorInitializerIndentWidth: 2
+ColumnLimit: 120
+DerivePointerAlignment: false
+SpacesBeforeTrailingComments: 1
+KeepEmptyLinesAtTheStartOfBlocks: true

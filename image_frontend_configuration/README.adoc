@@ -1,0 +1,495 @@
+= Frontend configuration
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+:toc:
+
+This README provides an introduction to the GigE Vision C++ code samples in this folder on how to configure the frontend of a Visionary camera.
+
+== How to run the samples
+[NOTE]
+====
+Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+====
+
+Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
+
+**Frontend configuration**
+[source,bash]
+----
+$ ./build/output/frontend_config -sXXXXXXXX
+or
+$ ./build/output/frontend_config -sXXXXXXXX -t1000
+
+# On Windows depending on the <CONFIG> = {Debug, Release}
+$ ./build/output/<CONFIG>/frontend_config
+or
+$ ./build/output/<CONFIG>/frontend_config -t1000
+----
+
+== Frontend configuration
+This example demonstrates how to configure the Visionary's frontend. The sample focuses on the binning configuration of the cameras. Images will be taken and the parameterization will be checked before and after configuration to verify that the changes have been applied.
+Before writing a new parameterization to the camera, the sample will differentiate which camera is connected because the Visionary-T Mini is currently the only Visionary device to support binning. 
+
+=== Usage
+When running the sample executable without arguments it will print usage information.
+
+[source,bash]
+----
+where option is one of:
+  -h              show this help and exit
+  -s<serial>      device serial number (required, e.g., -s23070123)
+  -t<timeout>     discovery timeout in milliseconds (default: 1000)
+
+This sample demonstrates how to configure image frontend parameters (binning)
+on a SICK Visionary device identified by its serial number. It acquires images
+before and after configuration to verify the effect of the binning settings.
+The device must be reachable on the network.
+
+Examples:
+  ./build/output/frontend_config -s23070123
+  ./build/output/frontend_config -s23070123 -t1000
+----
+
+=== Code explanation
+
+==== Initialize the error handle
+Handle for extended error info that will be reused across all functions where we check for error (and wish to receive extended error info).
+
+Most functions return a GsRet value, indicating whether the call was successful.
+The GsOK macro converts that value to a simple Boolean success/failure result.
+There is one exception to the rule above, functions which are simple getters which just
+return a simple value and are not expected to fail unless they are called with obviously
+broken prerequisites (such as using invalid handle). Such functions return the value
+directly instead of GsRet. All API functions provide an optional last parameter, GsErrorH*, allowing to obtain a handle to the extended error information (in particular the error message) if the function fails. This applies to all functions, including pure getters. The error handle will be created if and only if the function fails.
+
+[source,c++]
+----
+Error error;
+  
+----
+
+==== Initialize the library
+Initialize the library with streamlined error handling. We will use
+this approach for the rest of the tutorial. The idea is: use always the last parameter of each
+function to obtain the extended error info. This allows uniform error checking, no matter if the function returns GsRet or if it is a pure getter function. The throwOnError() helper function will check if there was an error
+and if yes, it reads the associated error message and turns the error to a C++ exception.
+It also automatically releases the error handle, if one was created.
+The second optional parameter of throwOnError() allows to specify a string that will be prepended
+to the actual error message for extra context, if useful.
+
+[source,c++]
+----
+gsLibraryInit(error.ptr());
+  throwOnError(error, "Failed to initialize GenIStreamC library: ");
+  
+----
+
+==== Library cleanup function
+In presence of exceptions, it is also useful to perform any cleanup, such as gsLibraryClose,
+through a RAII mechanism, so that it is always executed, no matter how the current scope
+is exited (including exception or other early return).
+The ScopeExit utility provides exactly that. After instantiating the scope exit handler below,
+we do not need to care about closing the library any more, it will be done always when
+leaving the current scope (in this case when leaving the try-block surrounding this code).
+
+[source,c++]
+----
+ScopeExit libCloser([=]() { gsLibraryClose(GsIgnoreErrorInfo); });
+  
+----
+
+==== Initialize and run the device discovery
+Instantiate the camera discovery object that will give us access to the camera(s).
+
+[source,c++]
+----
+Discovery discovery;
+  gsLibraryGetDiscovery(discovery.ptr(), error.ptr());
+  throwOnError(error, "Failed to get discovery object: ");
+  
+----
+
+The default device discovery timeout (time to wait for cameras announcing their presence in the network) is sufficient for off-factory Visionary cameras. However, GigE Vision specification defines a configurable delay (typically randomized up to 1 second) the cameras should insert before announcing themselves to avoid flooding the network if many cameras are connected.
+
+[source,c++]
+----
+gsDiscoveryScanForCameras(discovery, timeout, error.ptr());
+  throwOnError(error, "Failed to scan for cameras: ");
+
+  // Get number of discovered cameras
+  auto numCameras = gsDiscoveryGetNumDiscoveredCameras(discovery, error.ptr());
+  throwOnError(error, "Failed to get number of cameras: ");
+
+  if (numCameras == 0)
+  {
+    std::cerr << "No GigE Vision devices discovered in this system"
+              << "\n";
+    return 1;
+  }
+
+  // Print number of found devices
+  std::cout << "Number of found devices: " << numCameras << "\n\n";
+  
+----
+
+==== Identify the target device
+After a successful device discovery we search through the list of discovered cameras to find our specific device by its serial number. We:
+
+- Iterate over all discovered cameras.
+- Compare it to the requested serialNum.
+- If it matches, we store that camera as the targetCamera and stops searching.
+- If no camera matches, we print the info of each discovered camera & an error message. Finally we exit with a non-zero code.
+
+[source,c++]
+----
+DiscoveredCamera targetCamera;
+  bool foundTarget = false;
+
+  for (size_t i = 0; i < numCameras; ++i)
+  {
+    DiscoveredCamera discoveredCamera;
+    gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+    throwOnError(error);
+
+    auto pFoundSerialNum = gsDiscoveredCameraGetSerialNumber(discoveredCamera, error.ptr());
+    throwOnError(error);
+
+    if (serialNum == pFoundSerialNum)
+    {
+      targetCamera = std::move(discoveredCamera);
+      foundTarget = true;
+      std::cout << "  -> Target device found!"
+                << "\n\n";
+      break;
+    }
+  }
+
+  if (!foundTarget)
+  {
+    std::cerr << "Device with serial number '" << serialNum << "' not found"
+              << "\n";
+    std::cerr << "The following devices have been found"
+              << "\n";
+    for (size_t i = 0; i < numCameras; ++i)
+    {
+      DiscoveredCamera discoveredCamera;
+      gsDiscoveryGetDiscoveredCamera(discovery, i, discoveredCamera.ptr(), error.ptr());
+      throwOnError(error);
+      printDeviceInfo(discoveredCamera, error);
+    }
+    return 1;
+  }
+  
+----
+
+==== Check if the target is accessible
+Before trying to open the camera connection, we check the access status of the device. If the status is "NoAccess", most likely a wrong IP address is set in the device’s IP configuration (not matching the subnet of the network card it is connected to). We have two options to configure the device’s IP configuration:
+
+1. We can get a suitable proposed IP configuration and "force" it into the device. This is shown in xref:../../finding_and_connecting_devices/finding_and_connecting_devices/README.adoc#ip-proposal-recommended-for-quick-setup[IP proposal].
+2. We can configure the device ourselves and boot it into the expected IP subnet. A guide can be found in xref:../../finding_and_connecting_devices/finding_and_connecting_devices/README.adoc#ip-configuration-user-input[IP configuration]
+
+[source,c++]
+----
+auto accessStatus = gsDiscoveredCameraGetAccessStatus(targetCamera, error.ptr());
+  throwOnError(error);
+  if (accessStatus != egsAccessStatusReadWrite)
+  {
+    std::cerr << "The discovered camera is not ready to open"
+              << "\n";
+    return 1;
+  }
+  
+----
+
+==== Connect to discovered device
+Once we found the target device and confirmed it is accessible, we can open a connection to it.
+
+[source,c++]
+----
+Camera camera;
+  gsDiscoveryConnectToCamera(discovery, targetCamera, camera.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Create parameters handle object
+To access the device parameters we need to create a parameters handle object for the connected device.
+This object will hold the parameters handle as soon as it is used to get a specific camera’s parameter.
+The handle will be released automatically when the parameter was read from the device.
+Therefore the handle object can be used for multiple "gsParametersGet" operations as shown below.
+
+[source,c++]
+----
+Parameters parameters;
+  gsCameraCreateParameters(camera, parameters.ptr(), error.ptr());
+  throwOnError(error, "Failed to create camera parameters: ");
+  
+----
+
+==== Set selector to preferred image component
+.Visionary cameras can deliver multiple image components:
+- Intensity
+- Range
+- LeftImager
+- RightImager
+- ImuBasic
+
+In this example we concentrate on the configuration of the intensity image component. Therefore, we set the selector to the "Intensity" component.
+
+[source,c++]
+----
+// In this case we prefer to work with the intensity image component
+  gsParametersSetEnum(parameters, "ComponentSelector", "Intensity", error.ptr());
+  throwOnError(error, "Failed to set ComponentSelector to prefered image component: ");
+  
+----
+
+==== Enable selected image component
+By default, every Visionary camera delivers at least one image component without further configuration. In this example we enable the previously selected image component (intensity) to demonstrate how to enable/disable image components.
+
+A component is enabled by setting the `ComponentEnable` parameter to `GsTrue`, a boolean constant provided by the GenIStreamC C-ABI.
+
+By enabling an image component the camera will deliver that component in the next acquired images and frames.
+
+[source,c++]
+----
+// Enable the acquired image component (Intensity data) to be delivered with the stream
+  gsParametersSetBool(parameters, "ComponentEnable", GsTrue, error.ptr());
+  throwOnError(error, "Failed to enable previously selected image component: ");
+  
+----
+
+==== Prepare the frame grabber
+Before configuring the frontend settings of the Visionary camera, we need to create and start a frame grabber. The frame grabber is responsible for acquiring images from the camera.
+
+At first we create a frame grabber handle wrapper and increase the number of buffers used for the image acquisition. This can help overcome possible temporary hiccups in the buffer processing on GenIStream/application side.
+
+[source,c++]
+----
+const size_t numBuffers = 10;
+  FrameGrabber grabber;
+  gsCameraCreateFrameGrabber(camera, numBuffers, grabber.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+After creating the frame grabber handle, we start the frame grabber to enable image acquisition.
+
+[source,c++]
+----
+gsFrameGrabberStart(grabber, error.ptr());
+  throwOnError(error, "Failed to start frame grabber before configuration: ");
+  
+----
+
+==== Image acquisition before configuration
+Before changing any frontend configuration parameters, we acquire an image from the camera to demonstrate the effect of the configuration changes later. For that we start by grabbing the next image in the pipeline.
+
+[source,c++]
+----
+GrabResult grabResult;
+  gsFrameGrabberGrabNext(grabber, grabResult.ptr(), error.ptr());
+  throwOnError(error, "Failed to acquire a new image before configuration: ");
+  
+----
+
+To guarantee that the acquired image is complete and not corrupted, we check if any frames were lost during the image acquisition. If so, we grab the next frame from the pipeline again.
+
+[source,c++]
+----
+if (GsIsTrue(gsGrabResultHasLostFrames(grabResult, GsIgnoreErrorInfo)))
+  {
+    grabResult.release();
+    gsFrameGrabberGrabNext(grabber, grabResult.ptr(), error.ptr());
+    throwOnError(error, "Failed to acquire a new image before configuration after lost frames were detected: ");
+  }
+  
+----
+
+After storing the image in the grab result, we extract a frame from the image and check if there are packets missing in the retrieved frame. 
+
+[source,c++]
+----
+Frame frame;
+  gsGrabResultGetFrame(grabResult, GsFalse, frame.ptr(), error.ptr());
+  throwOnError(error);
+  std::cout << "Frame aquisition before configuration was successful"
+            << "\n\n";
+
+  if (GsIsTrue(gsFrameIsIncomplete(frame, GsIgnoreErrorInfo)))
+  {
+    std::cout << "\tBeware though, before configuration the frame was acquired incomplete (one or more packets lost)"
+              << "\n";
+  }
+  
+----
+
+After the successful inspection of the acquired image the acquisition process is completed. Therefore, we stop the frame grabber.
+Note that you can't access the camera's configuration while the frame grabber is running.
+
+[source,c++]
+----
+gsFrameGrabberStop(grabber, error.ptr());
+  throwOnError(error);
+  
+----
+
+==== Check frontend parameterization for current configuration
+In this example we want to configure the intensity component of the Visionary camera, hence we check the given pixel format of the intensity component of the acquired image.
+
+For this purpose we declare an `Component` handle wrapper which is used to extract the intensity component from the previously acquired frame of the image.
+
+[source,c++]
+----
+Component cmpIntensity;
+  gsFrameGetIntensity(frame, cmpIntensity.ptr(), error.ptr());
+  throwOnError(error);
+  
+----
+
+The `Component` handle wrapper now contains the intensity component of the acquired image. We can now read the pixel format of that component to check the current binning configuration of the intensity image.
+
+For this, we read-out the `Height` and `Width` parameter of the intensity component, because the image resolution directly reflects the frontend's binning configuration.
+
+[source,c++] 
+----
+auto intensityW = gsComponentGetWidth(cmpIntensity, GsIgnoreErrorInfo);
+  auto intensityH = gsComponentGetDeliveredHeight(cmpIntensity, GsIgnoreErrorInfo);
+  auto intensityFmt = gsComponentGetPixelFormat(cmpIntensity, GsIgnoreErrorInfo);
+
+  std::cout << "Before configuration:"
+            << "\n"
+            << "The acquired intensity component has the following properties:"
+            << "\n"
+            << "  - Width: " << intensityW << "\n"
+            << "  - Height: " << intensityH << "\n"
+            << "  - Pixel Format: " << GetPixelFormatName(PfncFormat(intensityFmt)) << "\n"
+            << "\n";
+  
+----
+
+After ensuring, that no further images are required by the application with the current configuration and that the previously acquired image is no longer needed, we release the `FrameGrabber` handle wrapper to enable configuration changes on the camera.
+Frontend parameters can only be modified when the `FrameGrabber` is released.
+
+[source,c++]
+----
+grabber.release();
+  
+----
+
+==== Frontend configuration
+Before parameterizing the frontend settings of the Visionary camera, we should always check if the desired parameters are currently available for read and write operations.
+
+In this example we want to configure the binning settings of the intensity image component, hence we check if horizontal binning parameter provides read and write access.
+
+[source,c++]
+----
+if (!GsIsTrue(gsParametersIsReadable(parameters, "BinningHorizontal", error.ptr())))
+  {
+    throw std::runtime_error("BinningHorizontal parameter is not readable");
+    return 1;
+  }
+  if (!GsIsTrue(gsParametersIsWritable(parameters, "BinningHorizontal", error.ptr())))
+  {
+    throw std::runtime_error("BinningHorizontal parameter is not writable");
+    return 1;
+  }
+
+  std::cout << "BinningHorizontal parameter is readable and writable"
+            << "\n";
+  
+----
+
+Afterwards, we check if the vertical binning parameter is available for read and write operations.
+
+[source,c++]
+----
+if (!GsIsTrue(gsParametersIsReadable(parameters, "BinningVertical", error.ptr())))
+  {
+    throw std::runtime_error("BinningVertical parameter is not readable");
+    return 1;
+  }
+  if (!GsIsTrue(gsParametersIsWritable(parameters, "BinningVertical", error.ptr())))
+  {
+    throw std::runtime_error("BinningVertical parameter is not writable");
+    return 1;
+  }
+
+  std::cout << "BinningVertical parameter is readable and writable"
+            << "\n\n";
+
+  if (!GsIsTrue(gsParametersIsWritable(parameters, "BinningVertical", error.ptr())))
+  {
+    throw std::runtime_error("BinningVertical parameter is not writable");
+    return 1;
+  }
+  else
+  {
+  }
+  
+----
+
+Since the binning parameters are checked properly and are accessible, we can set the horizontal and vertical binning by the `gsParametersSetInt` function.
+
+Normally, we have to select the `ComponentSelector` as the enumeration entry and set it to `Intensity` to configure the intensity component and enable the component to enable the acquisition of this image component. This was already shown in <<Set selector to preferred image component>> to <<Enable selected image component>>.
+
+However, in this example we already set the selector to intensity before to enable the `intensity` component, hence we can directly set the binning parameters.
+
+Note that binning configurations other than one for either horizontal or vertical binning are currently not supported for Visionary B-Two and Visionary-S devices.
+
+[source,c++]
+----
+int64_t horizontalBinningFactor = 0;
+  int64_t verticalBinningFactor = 0;
+
+  auto pDisplayName = gsDiscoveredCameraGetDisplayName(targetCamera, error.ptr());
+  throwOnError(error);
+
+  if (std::string(pDisplayName).find("Visionary-T Mini") != std::string::npos)
+  {
+    std::cout << "Device supports binning factors 1,2 and 4"
+              << "\n";
+    horizontalBinningFactor = 4; // Set horizontal binning factor to 1,2 or 4 (supported values)
+    verticalBinningFactor = 4;   // Set vertical binning factor to 1,2 or 4 (supported values)
+  }
+  else
+  {
+    std::cout << "Device does not support binning"
+              << "\n\n";
+    horizontalBinningFactor = 1;
+    verticalBinningFactor = 1;
+  }
+
+  gsParametersSetInt(parameters, "BinningHorizontal", horizontalBinningFactor, error.ptr());
+  throwOnError(error, "Failed to set BinningHorizontal parameter: ");
+  gsParametersSetInt(parameters, "BinningVertical", verticalBinningFactor, error.ptr());
+  throwOnError(error, "Failed to set BinningVertical parameter: ");
+
+  std::cout << "New binning configuration:"
+            << "\n"
+            << "  - Horizontal Binning: " << horizontalBinningFactor << "\n"
+            << "  - Vertical Binning: " << verticalBinningFactor << "\n"
+            << "\n";
+  
+----
+
+==== Acquire and check new frontend parameterization after changes in the configuration
+After the frontend configuration we start the acquisition process again and extract the image's intensity component to check the binning configuration after the changes. For that we follow the same steps as shown in <<Prepare frame grabber>> to <<Check frontend parameterization for current configuration>>.
+
+Note that the handle wrappers created for the first image acquisition aren't valid anymore after the handle wrapper `FrameGrabber` it originated from was released in <<Release frame grabber before configuration>>.
+Therefore, we need to release and re-bind the handle wrappers used in the whole process to ensure a clean state for the new acquisition process.
+
+.The affected handle wrappers are listed below:
+
+* FrameGrabber
+* GrabResult
+* Frame
+* Component
+
+[source,c++]
+----
+gsCameraCreateFrameGrabber(camera, numBuffers, grabber.ptr(), error.ptr());
+  throwOnError(error, "Failed to recreate frame grabber after configuration: ");
+  
+----

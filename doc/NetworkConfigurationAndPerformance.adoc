@@ -86,7 +86,7 @@ The GigE Vision cameras perform IP configuration procedure upon startup and upon
 
 The IP configuration consists of the IP address, subnet mask and optional default gateway (assigning zero to the default gateway and leaving it unused is usually the best choice). Note that the LLA protocol is always active and used as fallback if the other protocols fail (for example because of address conflicts). As required by the GigE Vision specification, the cameras are delivered off-factory with persistent IP disabled, DHCP/LLA enabled.
 
-For users accessing the cameras through the SICK GenTL Producer, the `ip_config.py` script delivered together with this package provides all functionality required to set the cameras' IP configuration:
+For users accessing the cameras through the SICK GenTL Producer, the `ip_config.py` script in `finding_and_connecting_devices/python` provides all functionality required to set the cameras' IP configuration:
 
 * Forcing a temporary IP address (if the camera is currently residing in different subnet and cannot be connected).
 * Selecting a persistent IP configuration (persistent/fixed IP, DHCP or LLA) to be used by the camera upon all subsequent boots (once the camera is connectable, forced already to correct subnet). In particular when assigning a fixed IP address to multiple cameras, be careful to avoid conflicts.

@@ -2,7 +2,10 @@ build/
 .vscode
 .fetchcontent
 .cti
-.venv
+.venv*
 *__pycache__
+*.egg-info/
 *.bmp
 *.ply
+*.pickle
+*.png

@@ -4,13 +4,16 @@
 :icons: font
 :toc:
 
-This README provides an introduction to the GigE Vision C++ code examples in this folder for streaming and storing images. It also describes how to calculate the point-cloud representation from the acquired range and intensity data.
+This README provides an introduction to the GigE Vision C++ and Python code examples in this folder for streaming and storing images. It also describes how to calculate the point-cloud representation from the acquired range and intensity data.
 
 == How to run the samples
+
 [NOTE]
 ====
 Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
 ====
+
+**C++**
 
 Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
 
@@ -59,6 +62,46 @@ $ ./build/output/<CONFIG>/pointcloud_streaming -s24000001 -w
 * Ensure exclusive access (AccessStatus = ReadWrite).
 * Verify subnet compatibility between host and device.
 ====
+
+**Python**
+
+[NOTE]
+====
+Make sure you followed the prerequisite steps in link:../README.adoc#python_install[Getting Started]
+====
+
+To run the Python samples, execute the following commands from the **sample subdirectory**:
+
+**Record**
+[source,bash]
+----
+# Record for a duration
+$ python ./python/record.py -c ./python/sample.cfg -d 2.5
+
+# Record a specific number of frames
+$ python ./python/record.py -c ./python/sample.cfg -n 100
+
+# Record in auto bracket mode
+$ python ./python/record.py -c ./python/sample.cfg -a 100,4000,50
+----
+
+**Load pickle**
+[source,bash]
+----
+$ python ./python/load_pickle.py -p data/recording.pickle
+----
+
+**Convert pickle to PLY**
+[source,bash]
+----
+$ python ./python/load_pickle2ply.py -p data/recording.pickle
+----
+
+**Convert pickle to SSR**
+[source,bash]
+----
+$ python ./python/load_pickle2ssr.py -p data/recording.pickle
+----
 
 == Image streaming and storing
 This example demonstrates how to discover a specific Visionary camera by its serial number, connect to it, configure acquisition parameters, stream frames, and optionally store intensity and range images as BMP files.
@@ -762,4 +805,56 @@ std::vector<std::array<double, 3>> pointCoordinates;
         ply.write(pointCloudFp.string(), happly::DataFormat::Binary);
       }
       
+----
+
+== Recording (Python)
+
+This script records data from one or multiple Visionary cameras using the Harvesters framework. The cameras to use and their configuration are specified via a configuration file. Recording supports three mutually exclusive modes:
+
+* **Duration**: Record for a specified number of seconds (e.g., `-d 2.5`).
+* **Frame count**: Record a specific number of frames (e.g., `-n 100`).
+* **Auto bracket**: Sweep exposure time from start to end with a given step size (e.g., `-a 100,4000,50`).
+
+Recorded data is stored in Python pickle format for later processing.
+
+=== Usage
+
+When you run the script with the `--help` flag, it prints its usage information:
+
+[source,bash]
+----
+$ python ./python/record.py --help
+----
+
+== Load pickle (Python)
+
+This script loads a previously recorded pickle file, prints debug output of the contained frames and displays the image data (range, intensity, color) using matplotlib.
+
+=== Usage
+
+[source,bash]
+----
+$ python ./python/load_pickle.py --help
+----
+
+== Convert pickle to PLY (Python)
+
+This script converts previously recorded pickle files to PLY (Polygon File Format) point clouds. It extracts camera intrinsics from the recorded data, computes 3D world coordinates from the range data, and stores the result as PLY files with intensity or color information.
+
+=== Usage
+
+[source,bash]
+----
+$ python ./python/load_pickle2ply.py --help
+----
+
+== Convert pickle to SSR (Python)
+
+This script converts previously recorded pickle files to SSR (SICK Streaming Recording) format. It extracts camera intrinsics from the recorded data and writes the distance and intensity maps along with camera calibration metadata into an SSR archive.
+
+=== Usage
+
+[source,bash]
+----
+$ python ./python/load_pickle2ssr.py --help
 ----

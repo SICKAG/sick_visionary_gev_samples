@@ -4,4 +4,8 @@ numpy
 packaging
 plyfile
 pillow
+matplotlib
+opencv-python
+toml
 gitpython
+-e ./shared/python

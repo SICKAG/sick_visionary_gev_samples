@@ -3,6 +3,47 @@
 This document provides a summary of all notable changes for the Visionary Gev samples collection.
 For a detailed view of what was changed, please refer to the repository's commit history.
 
+== 2.1.0
+
+=== Changed
+
+* Updated README taking into account added Python scripts
+* Included separate Python README into top-level README
+* IP configuration Python script has been moved to /finding_and_connecting_devices/
+* Refactored common.py from tutorial/python/ into a shared installable package (shared/python/)
+
+=== Fixed
+
+* Fixed --IP argument mapping in ip_config.py
+* Fixed raw regex patterns in config parser
+
+=== Added
+
+* Python scripts to record, load and convert data recordings added to /image_streaming_and_storing/
+** `record.py`
+** `load_pickle.py`
+** `load_pickle2ply.py`
+** `load_pickle2ssr.py`
+** `sample.cfg`
+* Python IMU data access sample added to /imu_data_access/
+** `sample_imu_data.py`
+* Shared Python modules added to /shared/python/
+** `common.py`, `gev_helper.py`, `IMU.py`, `intrinsics.py`, `pickle_harvester.py`, `ssr_helper.py`
+** `pyproject.toml` for installable package
+* Environment setup scripts
+** `setup_linux_env.sh`
+** `setup_windows_env.ps1`
+
+=== Known Issues
+
+=== Compatibility
+
+=== Supported devices
+
+* Visionary-T Mini AP 4.0.0
+* Visionary-S AP 3.17.0
+* Visionary-B Two 4.3.1
+
 == 2.0.0
 
 === Changed

@@ -4,13 +4,16 @@
 :icons: font
 :toc:
 
-This README provides an introduction to the GigE Vision C++ sample in this folder tht demonstrates how to acquire and parse IMU (inertial measurement unit) data from SICK Visionary GigE Vision devices using the GenIStreamC ABI.
+This README provides an introduction to the GigE Vision C++ and Python samples in this folder that demonstrate how to acquire and parse IMU (inertial measurement unit) data from SICK Visionary GigE Vision devices.
 
 == How to run the samples
+
 [NOTE]
 ====
 Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
 ====
+
+**C++**
 
 Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
 
@@ -21,6 +24,24 @@ $ ./build/output/imu_data -s24000001
 
 # On Windows depending on the <CONFIG> = {Debug, Release}
 $ ./build/output/<CONFIG>/imu_data -s24000001
+----
+
+**Python**
+
+[NOTE]
+====
+Make sure you followed the prerequisite steps in link:../README.adoc#python_install[Getting Started]
+====
+
+To run the Python sample, execute the following command from the **sample subdirectory**:
+
+**Sample IMU data**
+[source,bash]
+----
+$ python ./python/sample_imu_data.py
+
+# To select a specific device by serial number
+$ python ./python/sample_imu_data.py -s XXXXXXXX
 ----
 
 === Usage
@@ -355,4 +376,30 @@ Everything is ready to parse all delivered IMU data, let's print part of it (tim
               << imuValue.angularVelocity[2] << "|" << imuValue.timeStamp << '\n';
   }
   
+----
+
+== IMU Data Access (Python)
+
+This script demonstrates how to capture a frame and extract IMU (inertial measurement unit) data from SICK Visionary cameras using the Harvesters framework. It enables the ImuBasic component, acquires a single frame, parses the contained IMU data samples, and outputs them in CSV format including timestamp, acceleration and angular velocity.
+
+=== Usage
+
+When you run the script with the `--help` flag, it prints its usage information:
+[source,bash]
+----
+$ python ./python/sample_imu_data.py --help
+----
+
+[source,bash]
+----
+$ python ./python/sample_imu_data.py --help
+
+usage: sample_imu_data.py [-h] [-s SERIAL_NUMBER]
+
+Capture one frame and print extracted IMU data samples
+
+options:
+  -h, --help            show this help message and exit
+  -s, --serial_number SERIAL_NUMBER
+                        Serial number of the device to use. If omitted, the first discovered device is used.
 ----

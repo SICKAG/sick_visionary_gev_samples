@@ -4,13 +4,16 @@
 :icons: font
 :toc:
 
-This README provides an introduction to the GigE Vision C++ samples for discovering Visionary cameras on the network, reading device information, and configuring IP settings.
+This README provides an introduction to the GigE Vision C++ and Python samples for discovering Visionary cameras on the network, reading device information, and configuring IP settings.
 
 == How to run the samples
+
 [NOTE]
 ====
-Remember to adjust the command line arguments like serial number (`-s`) to match your specific device.
+Remember to adjust the command line arguments like serial number (`-s` / `-d`) to match your specific device.
 ====
+
+**C++**
 
 Either build and run the samples from the top-level directory as described link:../README.adoc#quick-start[here] or build and run the samples from the sample subdirectory using its CMakeLists.txt file.
 
@@ -38,6 +41,31 @@ $ ./build/output/configure_sensor -sXXXXXXXX -t1000
 $ ./build/output/<CONFIG>/configure_sensor -sXXXXXXXX
 or
 $ ./build/output/<CONFIG>/configure_sensor -sXXXXXXXX -t1000
+----
+
+**Python**
+
+[NOTE]
+====
+Make sure you followed the prerequisite steps in link:../README.adoc#python_install[Getting Started]
+====
+
+To run the Python samples, execute the following command from the **sample subdirectory**:
+
+**IP configuration**
+[source,bash]
+----
+# List all discovered devices
+$ python ./python/ip_config.py list
+
+# Force a temporary IP address to a device
+$ python ./python/ip_config.py force_ip -d XXXXXXXX -i 192.168.1.10 -s 255.255.255.0
+
+# Force an automatic temporary IP address (GenTL Producer picks a suitable address)
+$ python ./python/ip_config.py force_auto -d XXXXXXXX
+
+# Configure persistent static IP
+$ python ./python/ip_config.py persistent_ip -d XXXXXXXX -i 192.168.1.10 -s 255.255.255.0
 ----
 
 == Find Sensor
@@ -445,4 +473,169 @@ if (savePermanent)
     std::cout << "Permanently saved the current IP configuration.\n";
   }
   
+----
+
+== IP Configuration (Python)
+
+This script provides functionality to query and manage the IP configuration of the camera using Python and the Harvesters framework, which is required by this script for device access. A whose IP address that does not match the subnet of the connected network interface will be inaccessible.
+
+The script supports the following actions:
+
+* **list**: Lists all currently visible devices, including identity details, current IP settings, persistent IP configuration and access status.
+* **force_ip**: Forces a user-specified temporary IP address, subnet mask and optional gateway to the selected device. The device must not be in use during the operation. Note: This address is volatile and will not persist after a power cycle.
+* **force_auto**: Forces a suitable automatic temporary IP/subnet configuration proposed by the GenTL Producer to bring the device into the same subnet as the host NIC.
+* **force_restart**: Forces the device to restart its IP configuration procedure based on its current persistent settings.
+* **persistent_ip**: Configures the device to use the specified static IP/subnet/gateway settings on subsequent boots.
+* **persistent_current**: Configures the device to persist its currently active IP settings for subsequent boots.
+* **persistent_dhcp**: Configures the device to obtain its IP settings via DHCP (with LLA fallback) on subsequent boots.
+* **persistent_lla**: Configures the device to use only LLA (link-local addressing) on subsequent boots.
+
+=== Usage
+
+When you run the script with the `--help` flag, it prints its usage information:
+
+[source,bash]
+----
+$ python ./python/ip_config.py --help
+$ python ./python/ip_config.py <action> --help
+----
+
+Each action has its own help text describing the required and optional arguments.
+
+==== list
+
+Lists all currently discovered devices with their identity, current IP settings, persistent IP configuration and access status.
+No additional arguments are required.
+
+[source,bash]
+----
+$ python ./python/ip_config.py list
+----
+
+Example output:
+[source]
+----
+Listing currently discovered devices, device count: 1
+Visionary-T Mini CX (V3S105-1AAAAAA) [XXXXXXXX]
+    Vendor: SICK AG
+    Model: Visionary-T Mini CX (V3S105-1AAAAAA)
+    Serial number: XXXXXXXX
+    IP address: 192.168.136.10
+    Subnet mask: 255.255.255.0
+    Access status: READWRITE: full access, the device is ready to connect and configure persistent IP settings
+    Enabled IP configuration protocols: persistent IP - True, DHCP - False, LLA - always True
+    Persistent IP address/subnet/gateway: 192.168.136.10/255.255.255.0/0.0.0.0
+----
+
+==== force_ip
+
+Forces a user-specified **temporary** IP address and subnet mask to a device.
+The address is lost on the next power cycle.
+Use this when the camera is in the wrong subnet and therefore unreachable (access status `NOACCESS`).
+The device must not be in use by another application during the operation.
+
+[source,bash]
+----
+# Minimal call — gateway defaults to 0.0.0.0
+$ python ./python/ip_config.py force_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0
+
+# With an explicit gateway
+$ python ./python/ip_config.py force_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0 -g 192.168.136.1
+
+# Attached-value form (no spaces between flag and value)
+$ python ./python/ip_config.py force_ip -dXXXXXXXX -i192.168.136.10 -s255.255.255.0
+----
+
+[NOTE]
+====
+After a successful `force_ip` the device is reachable until its next power cycle.
+To make the address permanent, follow up with <<persistent_ip>>.
+====
+
+==== force_auto
+
+Asks the GenTL Producer to compute a suitable IP address and subnet mask that fit the host NIC, and forces them to the device automatically.
+No IP arguments are required — just the serial number.
+
+[source,bash]
+----
+$ python ./python/ip_config.py force_auto -d XXXXXXXX
+----
+
+==== force_restart
+
+Forces the device to restart its own IP configuration procedure using its stored persistent settings.
+Useful after changing persistent settings while the device was already running, or to recover from an unknown temporary state.
+
+[source,bash]
+----
+$ python ./python/ip_config.py force_restart -d XXXXXXXX
+----
+
+[NOTE]
+====
+The restart can take several seconds.
+Use the `list` action after a moment to confirm the new address.
+====
+
+[[persistent_ip]]
+==== persistent_ip
+
+Writes a static IP address, subnet mask and optional gateway to the non-volatile memory of the device.
+The settings are applied on every subsequent boot or cable re-connect.
+The device must have `READWRITE` access status (i.e. it must be reachable before this call; apply `force_ip` or `force_auto` first if needed).
+
+[source,bash]
+----
+# Minimal call — gateway defaults to 0.0.0.0
+$ python ./python/ip_config.py persistent_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0
+
+# With an explicit gateway
+$ python ./python/ip_config.py persistent_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0 -g 192.168.136.1
+----
+
+==== persistent_current
+
+Persists whatever IP address and subnet the device is *currently* using, without having to re-type them.
+Handy after a successful `force_ip` that you want to make permanent.
+
+[source,bash]
+----
+$ python ./python/ip_config.py persistent_current -d XXXXXXXX
+----
+
+==== persistent_dhcp
+
+Configures the device to obtain its IP settings via DHCP on the next boot (with LLA as fallback if no DHCP server replies).
+
+[source,bash]
+----
+$ python ./python/ip_config.py persistent_dhcp -d XXXXXXXX
+----
+
+==== persistent_lla
+
+Configures the device to use only Link-Local Addressing (169.254.x.x) on the next boot.
+No DHCP server is required.
+
+[source,bash]
+----
+$ python ./python/ip_config.py persistent_lla -d XXXXXXXX
+----
+
+==== Typical workflow: recover a misconfigured device
+
+[source,bash]
+----
+# 1. Discover what is on the network (may show NOACCESS status)
+$ python ./python/ip_config.py list
+
+# 2. Force a compatible temporary address so the device becomes reachable
+$ python ./python/ip_config.py force_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0
+
+# 3. Confirm the device is now accessible
+$ python ./python/ip_config.py list
+
+# 4. Persist the address so it survives a power cycle
+$ python ./python/ip_config.py persistent_ip -d XXXXXXXX -i 192.168.136.10 -s 255.255.255.0
 ----

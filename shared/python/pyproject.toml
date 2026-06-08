@@ -1,0 +1,18 @@
+#
+# Copyright (c) 2025 SICK AG, Waldkirch
+#
+# SPDX-License-Identifier: MIT
+
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visionary-gev-shared"
+version = "0.1.0"
+dependencies = [
+    "gitpython",
+    "packaging",
+]
+
+[tool.setuptools]
+py-modules = ["common", "intrinsics", "IMU", "gev_helper", "pickle_harvester", "ssr_helper"]
